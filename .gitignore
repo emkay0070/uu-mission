@@ -1,0 +1,58 @@
+# ═══════════════════════════════════════════════════════════════════════
+#  UU Mission — repository-wide .gitignore
+#
+#  `backend/` and `frontend/` each carry their own framework .gitignore
+#  (Laravel / Next.js). This root file is the safety net across the whole
+#  repository: it guards secrets, installed dependencies, build output and
+#  data artefacts no matter where they appear.
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── Secrets & credentials ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+/auth.json
+credentials*.json
+service-account*.json
+
+# ── Installed dependencies (restored from lockfiles) ──────────────────
+node_modules/
+vendor/
+
+# ── Build output ──────────────────────────────────────────────────────
+.next/
+/out/
+dist/
+
+# ── Databases, dumps & backups ────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.sql
+*.dump
+*.bak
+*.backup
+*.tar.gz
+*.tgz
+*.zip
+db-dumps/
+backups/
+
+# ── Test & coverage artefacts ─────────────────────────────────────────
+.phpunit.result.cache
+.phpunit.cache/
+/coverage/
+..est_output.txt
+test_output.txt
+test_audio.webm
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+
+# ── OS / editor cruft ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

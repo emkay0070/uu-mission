@@ -1,0 +1,189 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+/* ── Custom theme (replaces tailwind.config.js) ─────────────────────── */
+@theme {
+  --font-family-sans: 'Inter', system-ui, sans-serif;
+
+  /* Brand colours */
+  --color-brand-50:  #f0f4ff;
+  --color-brand-100: #e0e9ff;
+  --color-brand-200: #c7d6fe;
+  --color-brand-300: #a5b8fc;
+  --color-brand-400: #8090f8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
+  /* Surface colours — deep slate-950 base matching modal aesthetic */
+  --color-surface:        #080a0f;
+  --color-surface-1:      #0e1118;
+  --color-surface-2:      #141922;
+  --color-surface-3:      #1b2130;
+  --color-surface-border: #232d40;
+
+  /* Border radius overrides */
+  --radius-lg:  0.625rem;
+  --radius-xl:  0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /* Custom animations */
+  --animate-fade-up: fadeUp 0.4s ease forwards;
+  --animate-fade-in: fadeIn 0.3s ease forwards;
+  --animate-shimmer: shimmer 1.5s infinite;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+/* ── Base layer ──────────────────────────────────────────────────────── */
+@layer base {
+  * { box-sizing: border-box; }
+
+  html {
+    font-family: var(--font-family-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply text-slate-100;
+    min-height: 100dvh;
+    background-color: #080a0f;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99, 102, 241, 0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(79, 70, 229, 0.07) 0%, transparent 60%);
+    background-attachment: fixed;
+  }
+
+  ::-webkit-scrollbar             { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track       { background: transparent; }
+  ::-webkit-scrollbar-thumb       { @apply bg-surface-border rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-slate-500; }
+}
+
+/* ── Reusable base utilities (@utility lets them be used with @apply) ── */
+@utility btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-lg);
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  transition: all 150ms;
+  outline: none;
+}
+
+@utility badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+@utility card {
+  @apply bg-surface-1 border border-surface-border rounded-xl;
+}
+
+@utility card-2 {
+  @apply bg-surface-2 border border-surface-border rounded-xl;
+}
+
+@utility glass-card {
+  background: var(--glass-card-bg, rgba(51, 65, 85, 0.2));
+  backdrop-filter: var(--glass-card-blur, blur(12px));
+  -webkit-backdrop-filter: var(--glass-card-blur, blur(12px));
+  border: 1px solid var(--glass-card-border, rgba(148, 163, 184, 0.1));
+  border-radius: var(--radius-xl);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Component layer ─────────────────────────────────────────────────── */
+@layer components {
+  /* Inputs */
+  .input {
+    @apply w-full bg-surface-2 border border-surface-border rounded-lg px-3 py-2
+           text-sm text-slate-100 placeholder:text-slate-500
+           focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent
+           transition-all duration-150;
+  }
+  .input-error {
+    @apply border-red-500 focus:ring-red-500;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply btn bg-brand-600 hover:bg-brand-500 text-white
+           focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 focus:ring-offset-surface
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent hover:bg-surface-2 text-slate-300 hover:text-white
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-danger {
+    @apply btn bg-red-600/20 hover:bg-red-600/40 text-red-400 hover:text-red-300
+           border border-red-600/30
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  /* Status badges */
+  .badge-planning  { @apply badge bg-slate-500/20  text-slate-300  border border-slate-500/30; }
+  .badge-active    { @apply badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30; }
+  .badge-completed { @apply badge bg-blue-500/20   text-blue-300   border border-blue-500/30; }
+  .badge-archived  { @apply badge bg-slate-600/20  text-slate-400  border border-slate-600/20; }
+  .badge-draft     { @apply badge bg-amber-500/20  text-amber-300  border border-amber-500/30; }
+  .badge-submitted { @apply badge bg-brand-500/20  text-brand-300  border border-brand-500/30; }
+  .badge-reviewed  { @apply badge bg-purple-500/20 text-purple-300 border border-purple-500/30; }
+  .badge-approved  { @apply badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30; }
+  .badge-confirmed { @apply badge bg-brand-500/20  text-brand-300  border border-brand-500/30; }
+  .badge-arrived   { @apply badge bg-emerald-500/20 text-emerald-300 border border-emerald-500/30; }
+  .badge-pending   { @apply badge bg-amber-500/20  text-amber-300  border border-amber-500/30; }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply bg-surface-2 rounded animate-pulse;
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-2) 25%,
+      var(--color-surface-3) 50%,
+      var(--color-surface-2) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* Section heading */
+  .section-label {
+    @apply text-xs font-semibold uppercase tracking-wider text-slate-500;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply card p-5 flex flex-col gap-1;
+  }
+}
