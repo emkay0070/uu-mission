@@ -15,6 +15,19 @@ export interface ApiError {
 
 const BASE = '/api/v1';
 
+/**
+ * Absolute origin used only by the two long-running requests (speech-to-text
+ * and text-to-speech) that call the backend directly to bypass the Next.js
+ * proxy timeout.
+ *
+ * It is empty by default, so those calls stay same-origin and proxied, which is
+ * correct for local development and for deployments where the frontend and
+ * backend share a host. Set NEXT_PUBLIC_API_URL to the backend origin when the
+ * two are deployed separately. A hardcoded host here would force the user's
+ * browser to call their own machine and fail in production.
+ */
+const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+
 /** Guard against multiple parallel 401s each triggering a redirect. */
 let redirectingTo401 = false;
 
@@ -1007,8 +1020,9 @@ export const transcribeApi = {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
 
-    // Call backend directly to bypass Next.js proxy timeout on long-running requests
-    return fetch('http://localhost:8000/api/v1/transcribe', {
+    // Call the backend directly (when API_ORIGIN is set) to bypass the Next.js
+    // proxy timeout on long-running requests
+    return fetch(`${API_ORIGIN}/api/v1/transcribe`, {
       method: 'POST',
       headers,
       body: formData,
@@ -1077,8 +1091,9 @@ export const synthesisApi = {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
 
-    // Call backend directly to bypass Next.js proxy timeout on long-running requests
-    return fetch('http://localhost:8000/api/v1/synthesize', {
+    // Call the backend directly (when API_ORIGIN is set) to bypass the Next.js
+    // proxy timeout on long-running requests
+    return fetch(`${API_ORIGIN}/api/v1/synthesize`, {
       method: 'POST',
       headers,
       body: JSON.stringify(data),

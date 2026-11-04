@@ -66,7 +66,7 @@ class TranslationController extends Controller
         }
 
         // Check if Sunbird API token is configured
-        $apiToken = env('SUNBIRD_API_TOKEN');
+        $apiToken = config('services.sunbird.token');
         if (!$apiToken) {
             Log::error('Sunbird API token not configured');
             return response()->json([
@@ -251,7 +251,7 @@ class TranslationController extends Controller
         ]);
 
         // Check if Sunbird API token is configured
-        $apiToken = env('SUNBIRD_API_TOKEN');
+        $apiToken = config('services.sunbird.token');
         if (!$apiToken) {
             Log::error('Sunbird API token not configured for transcription');
             return response()->json([
@@ -418,7 +418,7 @@ class TranslationController extends Controller
         $voice = $validated['voice'] ?? null;
 
         // Check if Sunbird API token is configured
-        $apiToken = env('SUNBIRD_API_TOKEN');
+        $apiToken = config('services.sunbird.token');
         if (!$apiToken) {
             Log::error('Sunbird API token not configured for synthesis');
             return response()->json([

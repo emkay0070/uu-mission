@@ -35,4 +35,22 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Sunbird AI — Mission Translator
+    |--------------------------------------------------------------------------
+    |
+    | Credentials for the Sunbird AI translation, speech-to-text and
+    | text-to-speech APIs used by the Mission Translator.
+    |
+    | The token is surfaced through config so it survives `config:cache`, which
+    | production deployments run by default. Controllers must read it with
+    | config('services.sunbird.token') — never env() directly.
+    |
+    */
+
+    'sunbird' => [
+        'token' => env('SUNBIRD_API_TOKEN'),
+    ],
+
 ];

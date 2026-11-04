@@ -55,16 +55,30 @@ php artisan serve
 
 The API is served under `/api/v1`.
 
+The Mission Translator uses the Sunbird AI API. Set `SUNBIRD_API_TOKEN` in the
+backend environment (see `backend/.env.example`); the token is read server-side
+via `config('services.sunbird.token')` and is never exposed to the frontend.
+
 ## Frontend setup
 
 ```powershell
 cd frontend
 npm install
-Copy-Item .env.example .env.local   # if an example file is present
 npm run dev
 ```
 
-The workspace runs on port `3100` by default.
+The workspace runs on port `3100` by default. `/api/*` requests are proxied to
+the backend by a Next.js rewrite.
+
+Two optional environment variables control where the frontend reaches the API:
+
+| Variable               | Used by                        | Default                 |
+| ---------------------- | ------------------------------ | ----------------------- |
+| `BACKEND_URL`          | Next.js rewrite (build time)   | `http://localhost:8000` |
+| `NEXT_PUBLIC_API_URL`  | Speech-to-text / text-to-speech (browser, build time) | empty (same origin) |
+
+Leave both unset for local development and for single-host deployments. Set them
+when the frontend and backend run as separate services.
 
 ## Testing
 
