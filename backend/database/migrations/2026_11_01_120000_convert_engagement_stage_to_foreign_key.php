@@ -96,19 +96,8 @@ return new class extends Migration
             $table->dropColumn('engagement_stage_id');
         });
 
-        // Make ENUM column non-nullable
-        Schema::table('people', function (Blueprint $table) {
-            $table->enum('engagement_stage', [
-                'new_contact',
-                'interested',
-                'studying',
-                'decision_made',
-                'baptism_candidate',
-                'baptized',
-                'member',
-                'inactive',
-                'lost_contact'
-            ])->nullable(false)->change();
-        });
+        // Make ENUM column non-nullable (use raw SQL to avoid PostgreSQL
+        // incompatibility with inline CHECK constraints in ALTER COLUMN TYPE)
+        DB::statement('ALTER TABLE people ALTER COLUMN engagement_stage SET NOT NULL');
     }
 };
