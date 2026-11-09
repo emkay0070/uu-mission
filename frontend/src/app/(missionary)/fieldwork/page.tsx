@@ -139,6 +139,14 @@ export default function FieldworkPage() {
     first_name: '', last_name: '', phone: '', gender: '',
   });
 
+  // ── Link entry to Person (later linking) ───────────────────────────────────
+  const [showLinkForm, setShowLinkForm] = useState(false);
+  const [linkEntryId, setLinkEntryId] = useState<number | null>(null);
+  const [linkEntryUuid, setLinkEntryUuid] = useState<string | null>(null);
+  const [linkPersonSearch, setLinkPersonSearch] = useState('');
+  const [linkPersonResults, setLinkPersonResults] = useState<Person[]>([]);
+  const [linkSelectedPerson, setLinkSelectedPerson] = useState<Person | null>(null);
+
   // ── Objectives (what the activity set out to achieve) ──────────────────────
   // Objectives belong to the ACTIVITY, never to the register: opening a
   // register for an activity shows them, and an authorised user may curate
@@ -657,6 +665,57 @@ export default function FieldworkPage() {
     setParticipants((rows) => rows.filter((r) => r.entry_uuid !== entryUuid));
   };
 
+  // ── Link entry to Person (later linking) ───────────────────────────────────
+  const openLinkForm = (entryId: number | null, entryUuid: string | null) => {
+    setLinkEntryId(entryId);
+    setLinkEntryUuid(entryUuid);
+    setLinkPersonSearch('');
+    setLinkPersonResults([]);
+    setLinkSelectedPerson(null);
+    setShowLinkForm(true);
+  };
+
+  const searchLinkPeople = async (term: string) => {
+    setLinkPersonSearch(term);
+    if (term.trim().length < 2) {
+      setLinkPersonResults([]);
+      return;
+    }
+    try {
+      const response = await peopleApi.list({
+        search: term,
+        campaign_id: assignment?.campaign?.id,
+        per_page: 8,
+      });
+      setLinkPersonResults(response.data);
+    } catch (err) {
+      console.error('Failed to search people for linking:', err);
+    }
+  };
+
+  const handleLinkEntry = async () => {
+    if (!selectedRegister || !linkEntryId || !linkSelectedPerson) {
+      setError('Select a person to link this entry to.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await attendanceApi.linkEntry(selectedRegister.id, linkEntryId, {
+        person_id: linkSelectedPerson.id,
+      });
+
+      setShowLinkForm(false);
+      await loadParticipants(selectedRegister.id);
+    } catch (err: any) {
+      setError(err.message || 'Failed to link entry to person');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSaveAttendance = async () => {
     if (!selectedRegister) return;
     setIsSubmitting(true);
@@ -987,13 +1046,25 @@ export default function FieldworkPage() {
                       )}
                     </div>
                     {selectedRegister.status === 'open' && (
-                      <button
-                        onClick={() => handleRemoveRow(participant.entry_uuid!)}
-                        title="Remove from this register"
-                        className="p-1.5 rounded-lg hover:bg-surface-3/60 text-slate-500 hover:text-slate-300 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      <div className="flex gap-1">
+                        {/* Show link button for anonymous or name-only entries */}
+                        {participant.is_present && !participant.person_id && (
+                          <button
+                            onClick={() => openLinkForm(participant.entry_id, participant.entry_uuid)}
+                            title="Link to Person record"
+                            className="p-1.5 rounded-lg hover:bg-surface-3/60 text-brand-400 hover:text-brand-300 transition-colors"
+                          >
+                            <UserCog className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleRemoveRow(participant.entry_uuid!)}
+                          title="Remove from this register"
+                          className="p-1.5 rounded-lg hover:bg-surface-3/60 text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))
@@ -1497,6 +1568,81 @@ export default function FieldworkPage() {
                   className="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-medium transition-colors"
                 >
                   Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Link entry to Person modal ─────────────────────────────────────────── */}
+      {showLinkForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-surface-2 w-full max-w-md rounded-2xl border border-surface-border">
+            <div className="p-4 border-b border-surface-border flex items-center justify-between">
+              <h3 className="font-semibold text-slate-100">Link to Person record</h3>
+              <button
+                onClick={() => setShowLinkForm(false)}
+                className="p-1 rounded hover:bg-surface-3 text-slate-400 hover:text-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-slate-400">
+                Search for an existing Person record to link this attendance entry to. The original
+                name will be preserved.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-100 mb-1">Search Person</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <input
+                    type="text"
+                    value={linkPersonSearch}
+                    onChange={(e) => searchLinkPeople(e.target.value)}
+                    placeholder="Name or phone..."
+                    className="w-full pl-10 pr-3 py-2 bg-surface-3 border border-surface-border rounded-lg text-slate-100 focus:outline-none focus:border-brand-400"
+                  />
+                </div>
+              </div>
+
+              {linkPersonResults.length > 0 && (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {linkPersonResults.map((person) => (
+                    <button
+                      key={person.id}
+                      type="button"
+                      onClick={() => setLinkSelectedPerson(person)}
+                      className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                        linkSelectedPerson?.id === person.id
+                          ? 'bg-brand-500/10 border-brand-500'
+                          : 'bg-surface-3 border-surface-border hover:bg-surface-3/80'
+                      }`}
+                    >
+                      <p className="font-medium text-slate-100">{person.full_name}</p>
+                      {person.phone && <p className="text-xs text-slate-400">{person.phone}</p>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLinkForm(false)}
+                  className="flex-1 px-4 py-2 bg-surface-3 hover:bg-surface-3/80 text-slate-100 rounded-xl font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLinkEntry}
+                  disabled={!linkSelectedPerson || isSubmitting}
+                  className="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Link'}
                 </button>
               </div>
             </div>

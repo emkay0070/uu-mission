@@ -41,12 +41,18 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const token = getToken();
+  const isFormData = options.body instanceof FormData;
+
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     Accept: 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string> | undefined),
   };
+
+  // Only set Content-Type for non-FormData requests
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
 
@@ -65,7 +71,7 @@ async function request<T>(
 
   if (!res.ok) {
     throw {
-      message: body?.message ?? `Request failed (${res.status})`,
+      message: body?.message ?? body?.error ?? `Request failed (${res.status})`,
       errors: body?.errors,
       status: res.status,
     } as ApiError;
@@ -74,12 +80,95 @@ async function request<T>(
   return body as T;
 }
 
+/**
+ * Fetch a protected file with the bearer token and return its bytes.
+ *
+ * A file URL used as an `<img>` or PDF-viewer `src` cannot carry an
+ * `Authorization` header, and Sanctum does not accept `?token=`, so callers
+ * must fetch the file themselves and hand the UI an object URL.
+ */
+async function requestBlob(path: string): Promise<Blob> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: {
+      Accept: '*/*',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (res.status === 401) {
+    localStorage.removeItem('uu_token');
+    if (!redirectingTo401) {
+      redirectingTo401 = true;
+      window.location.href = '/login';
+    }
+    throw { message: 'Session expired', status: 401 } as ApiError;
+  }
+
+  if (!res.ok) {
+    let body: { message?: string; errors?: Record<string, string[]> } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    throw {
+      message: body?.message ?? `File request failed (${res.status})`,
+      errors: body?.errors,
+      status: res.status,
+    } as ApiError;
+  }
+
+  return res.blob();
+}
+
+/**
+ * Save an authenticated file blob by clicking a temporary download link.
+ *
+ * File URLs cannot carry the bearer token, so protected downloads are fetched
+ * with `requestBlob()` and handed to the browser as an object URL.
+ */
+export function saveBlobAsFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * Serialise a request body.
+ *
+ * FormData must be forwarded untouched: `JSON.stringify(formData)` produces
+ * `{}` and silently drops the file/metadata, which the API reports as missing
+ * required fields. `undefined` stays undefined so body-less requests work.
+ */
+function encodeBody(data: unknown): BodyInit | undefined {
+  if (data === undefined) return undefined;
+  if (data instanceof FormData) return data;
+  return JSON.stringify(data);
+}
+
 export const api = {
   get:    <T>(path: string) => request<T>(path, { method: 'GET' }),
   post:   <T>(path: string, data?: unknown) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(data) }),
-  patch:  <T>(path: string, data?: unknown) =>
-    request<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
+    request<T>(path, { method: 'POST', body: encodeBody(data) }),
+  patch:  <T>(path: string, data?: unknown) => {
+    // PHP does not parse multipart bodies for PATCH, so a FormData PATCH must
+    // be sent as POST with Laravel's method spoofing.
+    if (data instanceof FormData) {
+      if (!data.has('_method')) {
+        data.append('_method', 'PATCH');
+      }
+      return request<T>(path, { method: 'POST', body: data });
+    }
+    return request<T>(path, { method: 'PATCH', body: encodeBody(data) });
+  },
+  put:    <T>(path: string, data?: unknown) =>
+    request<T>(path, { method: 'PUT', body: encodeBody(data) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
@@ -89,8 +178,14 @@ export const api = {
  * Values that are `undefined`, `null` or an empty string are OMITTED entirely.
  * This matters because blindly stringifying them produces literal values like
  * `campaign_id=undefined`, which the backend rejects with a 422 validation
- * error ("The campaign id field must be an integer"). Booleans and numbers are
- * serialized normally; arrays are repeated as multiple key entries.
+ * error ("The campaign id field must be an integer"). Numbers are serialized
+ * normally; arrays are repeated as multiple key entries.
+ *
+ * Booleans are emitted as `1`/`0`, NEVER as the literal strings "true"/"false".
+ * Laravel's `boolean` validation rule accepts only `true, false, 1, 0, "1",
+ * "0"`, so a query like `?pending_review=true` is rejected with a 422 ("The
+ * pending review field must be true or false"). `1`/`0` satisfy both that rule
+ * and `$request->boolean()`, which is how the controllers read the flag.
  *
  * @returns `''` when nothing survives filtering, otherwise `'?a=1&b=2'`.
  */
@@ -103,6 +198,11 @@ function buildQuery(
 
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === '') continue;
+
+    if (typeof value === 'boolean') {
+      search.set(key, value ? '1' : '0');
+      continue;
+    }
 
     if (Array.isArray(value)) {
       for (const item of value) {
@@ -137,6 +237,56 @@ export interface AuthScope {
   team_id: number | null;
   valid_from: string | null;
   valid_until: string | null;
+  /**
+   * The permission codes THIS assignment carries (overrides applied).
+   *
+   * Optional for backwards compatibility with older payloads. When present it
+   * lets the client ask a scope-aware question ("may I do X in this site?")
+   * instead of relying on the flattened union. Still a UI affordance only —
+   * the backend re-authorises every request against the real resource scope.
+   */
+  permissions?: string[];
+}
+
+/** The four operational workspaces a person may qualify for. */
+export type WorkspaceKey =
+  | 'missionary'
+  | 'site_operations'
+  | 'campaign_management'
+  | 'platform_administration';
+
+/**
+ * One authorised context inside a workspace.
+ *
+ * The campaign/site/team identity is resolved by the backend so the interface
+ * can render — and switch between — every authorised context, rather than
+ * silently keeping only the first assignment.
+ */
+export interface WorkspaceContext {
+  scope_type: 'global' | 'org_unit' | 'campaign' | 'site' | 'team';
+  scope_id: number | null;
+  label: string;
+  campaign_id: number | null;
+  campaign_name: string | null;
+  site_id: number | null;
+  site_name: string | null;
+  team_id: number | null;
+  team_name: string | null;
+  roles: string[];
+}
+
+/**
+ * A workspace descriptor, derived on the backend from effective role
+ * assignments and the authority each one carries.
+ */
+export interface WorkspaceDescriptor {
+  key: WorkspaceKey;
+  label: string;
+  description: string;
+  /** The route the workspace opens at. */
+  home: string;
+  role_codes: string[];
+  contexts: WorkspaceContext[];
 }
 
 export interface AuthUser {
@@ -145,12 +295,23 @@ export interface AuthUser {
   status: string;
   timezone: string;
   last_login_at: string;
+  /**
+   * @deprecated Binary summary retained for compatibility while consumers
+   * migrate. Use `workspaces` — it expresses everything `primary_role` cannot
+   * (site-operational authority, multiple authorised contexts).
+   */
   primary_role: 'admin' | 'missionary' | null;
   roles: Array<{
     code: string;
     label: string;
     scope_type: string;
   }>;
+  /**
+   * Operational workspaces this person may enter, derived on the backend from
+   * their effective role assignments. An empty array means none is available
+   * yet and the client must show a neutral state.
+   */
+  workspaces: WorkspaceDescriptor[];
   /**
    * Effective permission codes — the union across all active scopes.
    * For UI affordances ONLY (navigation, control visibility). The backend
@@ -291,6 +452,15 @@ export interface Team {
   description: string | null;
   team_type: { id: number; code: string; label: string } | null;
   members_count?: number;
+  /** The site the team belongs to. Present on the team-detail response. */
+  site?: MissionSite | null;
+  /** Where the members come from. Present on the team-detail response. */
+  origin_org_unit?: { id: number; name: string } | null;
+}
+
+/** A team together with its CURRENT roster, as returned by the detail endpoint. */
+export interface TeamDetail extends Team {
+  members: TeamMember[];
 }
 
 export interface TeamMember {
@@ -307,11 +477,17 @@ export const teamsApi = {
     return api.get<Team[]>(`/campaigns/${campaignId}/teams${q}`);
   },
   get:        (campaignId: number, teamId: number) =>
-    api.get<Team & { members: TeamMember[] }>(`/campaigns/${campaignId}/teams/${teamId}`),
+    api.get<TeamDetail>(`/campaigns/${campaignId}/teams/${teamId}`),
   create:     (campaignId: number, data: { name: string; description?: string; mission_site_id?: number; team_type_id?: number; origin_org_unit_id?: number }) =>
     api.post<Team>(`/campaigns/${campaignId}/teams`, data),
+  update:     (campaignId: number, teamId: number, data: { name?: string; description?: string | null; team_type_id?: number | null; origin_org_unit_id?: number | null }) =>
+    api.patch<Team>(`/campaigns/${campaignId}/teams/${teamId}`, data),
   addMember:  (campaignId: number, teamId: number, data: { person_id: number; role_in_team: string }) =>
     api.post<TeamMember>(`/campaigns/${campaignId}/teams/${teamId}/members`, data),
+  // Changing a member's role is how leadership is transferred: setting a
+  // member to 'leader' demotes the sitting leader in the same operation.
+  updateMember: (campaignId: number, teamId: number, memberId: number, data: { role_in_team: string }) =>
+    api.patch<TeamMember>(`/campaigns/${campaignId}/teams/${teamId}/members/${memberId}`, data),
   removeMember: (campaignId: number, teamId: number, memberId: number) =>
     api.delete(`/campaigns/${campaignId}/teams/${teamId}/members/${memberId}`),
 };
@@ -1681,10 +1857,24 @@ export interface AttendanceEntry {
   register?: AttendanceRegister;
 }
 
+/**
+ * Laravel's `LengthAwarePaginator` envelope, returned by every paginated list
+ * endpoint. `last_page` is what makes real paging possible; the endpoints cap
+ * `per_page` at 100 (`between:5,100`), so a site larger than one page must be
+ * walked through `page` rather than asked for in a single oversized request.
+ */
+export interface Paginated<T> {
+  data: T[];
+  current_page: number;
+  per_page: number;
+  last_page: number;
+  total: number;
+}
+
 export const peopleApi = {
-  list: (params?: { search?: string; campaign_id?: number; mission_site_id?: number; per_page?: number }) => {
+  list: (params?: { search?: string; campaign_id?: number; mission_site_id?: number; per_page?: number; page?: number; include?: string }) => {
     const q = buildQuery(params);
-    return api.get<{ data: Person[]; total: number }>(`/people${q}`);
+    return api.get<Paginated<Person>>(`/people${q}`);
   },
   get: (id: number) => api.get<Person>(`/people/${id}`),
   checkDuplicates: (params: { first_name: string; last_name: string; phone?: string }) => {
@@ -1782,9 +1972,9 @@ export interface AttendanceEntryPayload {
 }
 
 export const attendanceApi = {
-  list: (params?: { campaign_id?: number; mission_site_id?: number; activity_id?: number; date?: string; status?: string; per_page?: number }) => {
+  list: (params?: { campaign_id?: number; mission_site_id?: number; activity_id?: number; date?: string; status?: string; per_page?: number; page?: number }) => {
     const q = buildQuery(params);
-    return api.get<{ data: AttendanceRegister[]; total: number }>(`/attendance-registers${q}`);
+    return api.get<Paginated<AttendanceRegister>>(`/attendance-registers${q}`);
   },
   get: (id: number) => api.get<AttendanceRegister>(`/attendance-registers/${id}`),
   create: (data: {
@@ -1889,9 +2079,9 @@ export interface AttendanceReconciliation {
 // ── Outreach Contacts API ─────────────────────────────────────────────────────
 
 export const outreachContactsApi = {
-  list: (params?: { engagement_stage?: string; campaign_id?: number; is_active?: boolean; search?: string; per_page?: number }) => {
+  list: (params?: { engagement_stage?: string; campaign_id?: number; mission_site_id?: number; is_active?: boolean; search?: string; per_page?: number; page?: number }) => {
     const q = buildQuery(params);
-    return api.get<{ data: OutreachContact[]; total: number }>(`/outreach-contacts${q}`);
+    return api.get<Paginated<OutreachContact>>(`/outreach-contacts${q}`);
   },
   get: (id: number) => api.get<OutreachContact>(`/outreach-contacts/${id}`),
   create: (data: {
@@ -1956,4 +2146,426 @@ export const baptismRecordsApi = {
   }) => api.post<BaptismRecord>('/baptism-records', data),
   verify: (id: number, data: { status: 'verified' | 'rejected'; notes?: string }) =>
     api.post<BaptismRecord>(`/baptism-records/${id}/verify`, data),
+};
+
+// ── Resources API ─────────────────────────────────────────────────────────────
+
+export interface Resource {
+  id: number;
+  uuid: string;
+  title: string;
+  description: string | null;
+  category_id: number | null;
+  category?: { id: number; label: string };
+  language: string;
+  intended_audience: string | null;
+  publisher: string | null;
+  publication_date: string | null;
+  version_number: string;
+  status: 'draft' | 'pending_review' | 'published' | 'archived';
+  current_version_id: number | null;
+  currentVersion?: ResourceVersion;
+  thumbnail_storage_disk: string | null;
+  thumbnail_storage_path: string | null;
+  published_at: string | null;
+  archived_at: string | null;
+  published_by_user_id: number | null;
+  created_by_user_id: number;
+  updated_by_user_id: number;
+  origin_assignment_id: number | null;
+  created_at: string;
+  updated_at: string;
+  tags?: ResourceTag[];
+  createdBy?: { id: number; first_name: string; last_name: string };
+  publishedBy?: { id: number; first_name: string; last_name: string };
+}
+
+export interface ProcessingStatus {
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  resource_version_id: number;
+  started_at: string | null;
+  completed_at: string | null;
+  total_pages: number | null;
+  extracted_pages: number | null;
+  chunk_count: number | null;
+  error_message: string | null;
+}
+
+export interface ResourceVersion {
+  id: number;
+  resource_id: number;
+  version_number: string;
+  storage_disk: string;
+  storage_path: string;
+  original_filename: string;
+  mime_type: string;
+  media_type: string;
+  file_size: number;
+  change_reason: string | null;
+  replaced_by_user_id: number | null;
+  created_at: string;
+  processing_status?: ProcessingStatus | null;
+}
+
+export interface ResourceTag {
+  id: number;
+  resource_id: number;
+  tag: string;
+}
+
+export interface ResourceDistributionRequest {
+  id: number;
+  resource_id: number;
+  requested_by_user_id: number;
+  audience_type: string;
+  audience_key: string;
+  target_org_unit_id: number | null;
+  target_campaign_id: number | null;
+  target_site_id: number | null;
+  target_team_id: number | null;
+  recipient_user_id: number | null;
+  resource_version_id: number;
+  supersedes_request_id: number | null;
+  status: 'pending_review' | 'returned' | 'rejected' | 'approved' | 'revoked' | 'superseded';
+  submitted_at: string;
+  decided_at: string | null;
+  decided_by_user_id: number | null;
+  decision_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  resource?: Resource;
+  version?: ResourceVersion;
+  requester?: { id: number; first_name: string; last_name: string };
+  decisions?: Array<{
+    id: number;
+    action: string;
+    reason: string | null;
+    actor_user_id: number;
+    actor?: { id: number; first_name: string; last_name: string };
+    created_at: string;
+  }>;
+}
+
+export interface DistributionTargets {
+  organizational_units: Array<{ id: number; name: string; parent_id: number | null; org_unit_type_id: number; short_code: string; type?: { id: number; code: string; name: string } }>;
+  campaigns: Array<{ id: number; name: string; org_unit: string | null }>;
+  sites: Array<{ id: number; name: string; campaign_id: number }>;
+  teams: Array<{ id: number; name: string; campaign_id: number; site_id: number | null }>;
+  audience_types: string[];
+}
+
+export const resourcesApi = {
+  // List published resources (library view)
+  list: (params?: {
+    search?: string;
+    category_id?: number;
+    language?: string;
+    intended_audience?: string;
+    tag?: string;
+    per_page?: number;
+  }) => {
+    const q = buildQuery(params);
+    return api.get<{ data: Resource[]; total: number; current_page: number; last_page: number }>(`/resources${q}`);
+  },
+
+  // List user's own drafts
+  myDrafts: (params?: { per_page?: number; page?: number }) => {
+    const q = buildQuery(params);
+    return api.get<{ data: Resource[]; total: number; current_page: number; last_page: number }>(`/resources/my-drafts${q}`);
+  },
+
+  get: (id: number) => api.get<Resource>(`/resources/${id}`),
+
+  create: (data: FormData) => api.post<Resource>('/resources', data),
+
+  update: (id: number, data: FormData) => api.patch<Resource>(`/resources/${id}`, data),
+
+  replaceFile: (id: number, data: { file: File; change_reason: string }) => {
+    const formData = new FormData();
+    formData.append('file', data.file);
+    formData.append('change_reason', data.change_reason);
+    return api.post<Resource>(`/resources/${id}/replace-file`, formData);
+  },
+
+  archive: (id: number) => api.post<Resource>(`/resources/${id}/archive`, {}),
+
+  versions: (id: number) => api.get<ResourceVersion[]>(`/resources/${id}/versions`),
+
+  previewBlob: (id: number) => requestBlob(`/resources/${id}/preview`),
+
+  downloadBlob: (id: number) => requestBlob(`/resources/${id}/download`),
+
+  thumbnailBlob: (id: number) => requestBlob(`/resources/${id}/thumbnail`),
+
+  // Distribution requests
+  distributionTargets: () => api.get<DistributionTargets>('/resources/distribution-targets'),
+
+  distributionRequests: (params?: { status?: string; per_page?: number; page?: number }) => {
+    const q = buildQuery(params);
+    return api.get<{ data: ResourceDistributionRequest[]; total: number; current_page: number; last_page: number }>(`/resources/distribution-requests${q}`);
+  },
+
+  submitDistribution: (resourceId: number, data: {
+    audience_type: string;
+    target_org_unit_id?: number;
+    target_campaign_id?: number;
+    target_site_id?: number;
+    target_team_id?: number;
+    recipient_user_id?: number;
+    supersedes_request_id?: number;
+  }) => api.post<ResourceDistributionRequest>(`/resources/${resourceId}/distribution-requests`, data),
+
+  resubmitDistribution: (requestId: number) => api.post<ResourceDistributionRequest>(`/resources/distribution-requests/${requestId}/resubmit`, {}),
+
+  decideDistribution: (requestId: number, data: { action: 'approved' | 'rejected' | 'returned'; reason?: string }) =>
+    api.post<ResourceDistributionRequest>(`/resources/distribution-requests/${requestId}/decision`, data),
+
+  revokeDistribution: (requestId: number, data: { reason: string }) =>
+    api.post<ResourceDistributionRequest>(`/resources/distribution-requests/${requestId}/revoke`, data),
+
+  // Reading progress
+  progress: {
+    get: (resourceId: number, versionId?: number) => {
+      const q = versionId ? `?version_id=${versionId}` : '';
+      return api.get(`/resources/${resourceId}/progress${q}`);
+    },
+    save: (resourceId: number, data: {
+      version_id?: number;
+      last_page: number;
+      total_pages?: number;
+      completion_percentage: number;
+      reading_position?: any;
+    }) => api.post(`/resources/${resourceId}/progress`, data),
+    history: (params?: { per_page?: number; recent?: boolean }) => {
+      const q = buildQuery(params);
+      return api.get(`/resources/reading-resources${q}`);
+    },
+  },
+
+  // Bookmarks
+  bookmarks: {
+    list: (resourceId: number, versionId?: number) => {
+      const q = versionId ? `?version_id=${versionId}` : '';
+      return api.get(`/resources/${resourceId}/bookmarks${q}`);
+    },
+    create: (resourceId: number, data: {
+      version_id?: number;
+      page_number: number;
+      position_data?: any;
+      title: string;
+    }) => api.post(`/resources/${resourceId}/bookmarks`, data),
+    delete: (resourceId: number, bookmarkId: number) =>
+      api.delete(`/resources/${resourceId}/bookmarks/${bookmarkId}`),
+  },
+
+  // Highlights
+  highlights: {
+    list: (resourceId: number, params?: { version_id?: number; page_number?: number }) => {
+      const q = buildQuery(params);
+      return api.get(`/resources/${resourceId}/highlights${q}`);
+    },
+    create: (resourceId: number, data: {
+      version_id?: number;
+      selected_text: string;
+      page_number: number;
+      bounding_box: any;
+      color?: string;
+      zoom_level?: number;
+    }) => api.post(`/resources/${resourceId}/highlights`, data),
+    update: (resourceId: number, highlightId: number, data: { color?: string }) =>
+      api.patch(`/resources/${resourceId}/highlights/${highlightId}`, data),
+    delete: (resourceId: number, highlightId: number) =>
+      api.delete(`/resources/${resourceId}/highlights/${highlightId}`),
+  },
+
+  // Notes
+  notes: {
+    list: (resourceId: number, params?: { version_id?: number; page_number?: number }) => {
+      const q = buildQuery(params);
+      return api.get(`/resources/${resourceId}/notes${q}`);
+    },
+    create: (resourceId: number, data: {
+      version_id?: number;
+      content: string;
+      page_number: number;
+      position_data?: any;
+    }) => api.post(`/resources/${resourceId}/notes`, data),
+    update: (resourceId: number, noteId: number, data: { content: string }) =>
+      api.patch(`/resources/${resourceId}/notes/${noteId}`, data),
+    delete: (resourceId: number, noteId: number) =>
+      api.delete(`/resources/${resourceId}/notes/${noteId}`),
+  },
+
+  // Saved resources
+  saved: {
+    list: (params?: { per_page?: number }) => {
+      const q = buildQuery(params);
+      return api.get(`/saved-resources${q}`);
+    },
+    save: (resourceId: number, versionId?: number) => {
+      const data = versionId ? { version_id: versionId } : {};
+      return api.post(`/resources/${resourceId}/save`, data);
+    },
+    remove: (resourceId: number) => api.delete(`/resources/${resourceId}/save`),
+    status: (resourceId: number) => api.get(`/resources/${resourceId}/saved-status`),
+  },
+
+  // Downloads
+  downloads: {
+    list: (params?: { per_page?: number }) => {
+      const q = buildQuery(params);
+      return api.get(`/downloaded-resources${q}`);
+    },
+    record: (resourceId: number, data: {
+      version_id?: number;
+      file_size: number;
+    }) => api.post(`/resources/${resourceId}/download-record`, data),
+    updateAccess: (resourceId: number) => api.patch(`/resources/${resourceId}/download-record`, {}),
+    remove: (resourceId: number) => api.delete(`/resources/${resourceId}/download-record`),
+    status: (resourceId: number) => api.get(`/resources/${resourceId}/download-status`),
+  },
+};
+
+// AI Learning Companion
+export const ai = {
+  chat: (resourceId: number, data: {
+    message: string;
+    conversation_id?: number;
+    page_number?: number;
+    selected_text?: string;
+    context_type?: 'selected_text' | 'current_page' | 'whole_book' | 'general' | 'general_explanation';
+  }) => api.post(`/resources/${resourceId}/ai/chat`, data),
+  conversations: (resourceId: number) => api.get(`/resources/${resourceId}/ai/conversations`),
+  allConversations: () => api.get('/ai/conversations'),
+  getConversation: (conversationId: number) => api.get(`/ai/conversations/${conversationId}`),
+  deleteConversation: (conversationId: number) => api.delete(`/ai/conversations/${conversationId}`),
+  retryMessage: (messageId: number) => api.post(`/ai/messages/${messageId}/retry`),
+  saveExplanation: (data: {
+    conversation_message_id: number;
+    title: string;
+    content: string;
+    page_number?: number;
+    selected_text?: string;
+  }) => api.post('/ai/saved-explanations', data),
+  savedExplanations: (params?: { resource_id?: number }) => {
+    const q = buildQuery(params);
+    return api.get(`/ai/saved-explanations${q}`);
+  },
+};
+
+// Learning Notes
+export const learningNotesApi = {
+  list: (resourceId: number, params?: { note_type?: string; chapter?: string }) => {
+    const q = buildQuery(params);
+    return api.get(`/resources/${resourceId}/learning-notes${q}`);
+  },
+  create: (resourceId: number, data: {
+    note_type: 'understanding' | 'reflection' | 'chapter_summary' | 'book_summary' | 'important_passage' | 'question';
+    title: string;
+    content: string;
+    chapter?: string;
+    page_number?: number;
+    passage_text?: string;
+    passage_position?: any;
+    saved_explanation_id?: number;
+    conversation_message_id?: number;
+  }) => api.post(`/resources/${resourceId}/learning-notes`, data),
+  update: (resourceId: number, noteId: number, data: {
+    title?: string;
+    content?: string;
+  }) => api.put(`/resources/${resourceId}/learning-notes/${noteId}`, data),
+  delete: (resourceId: number, noteId: number) => api.delete(`/resources/${resourceId}/learning-notes/${noteId}`),
+};
+
+// ── Resource Categories ───────────────────────────────────────────────────────
+
+export interface ResourceCategory {
+  id: number;
+  code: string;
+  label: string;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export const resourceCategoriesApi = {
+  list: () => api.get<ResourceCategory[]>('/resource-categories'),
+  get: (id: number) => api.get<ResourceCategory>(`/resource-categories/${id}`),
+};
+
+// ── Communication Centre ───────────────────────────────────────────────────────
+
+export type CommunicationType = 'announcement' | 'organisational_update' | 'instruction';
+export type CommunicationScope = 'global' | 'org_unit' | 'campaign' | 'site' | 'team';
+export type CommunicationStatus = 'draft' | 'published' | 'revoked';
+
+export interface CommunicationAuthor {
+  id: number;
+  name: string;
+  email: string;
+}
+
+export interface Communication {
+  id: number;
+  title: string;
+  body: string;
+  communication_type: CommunicationType;
+  scope_type: CommunicationScope;
+  scope_id: number | null;
+  scope_label: string;
+  author: CommunicationAuthor | null;
+  requires_acknowledgement: boolean;
+  status: CommunicationStatus;
+  published_at: string | null;
+  expires_at: string | null;
+  created_at: string | null;
+  read_at: string | null;
+  acknowledged_at: string | null;
+  is_unread: boolean;
+  is_acknowledged: boolean;
+}
+
+export interface CommunicationsListResponse {
+  data: Communication[];
+  meta: {
+    current_page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+    unread_count: number;
+  };
+}
+
+export interface UnreadCountResponse {
+  unread_count: number;
+}
+
+export const communicationsApi = {
+  list: (params?: { per_page?: number }) => {
+    const q = buildQuery(params);
+    return api.get<CommunicationsListResponse>(`/communications${q}`);
+  },
+  unreadCount: () => api.get<UnreadCountResponse>('/communications/unread-count'),
+  requiringAcknowledgement: () =>
+    api.get<{ data: Communication[] }>('/communications/requiring-acknowledgement'),
+  get: (id: number) => api.get<Communication>(`/communications/${id}`),
+  create: (data: {
+    title: string;
+    body: string;
+    communication_type: CommunicationType;
+    scope_type: CommunicationScope;
+    scoped_org_unit_id?: number;
+    scoped_campaign_id?: number;
+    scoped_site_id?: number;
+    scoped_team_id?: number;
+    requires_acknowledgement?: boolean;
+    expires_at?: string;
+    status?: 'draft' | 'published';
+  }) => api.post<Communication>('/communications', data),
+  update: (id: number, data: Partial<Communication>) =>
+    api.patch<Communication>(`/communications/${id}`, data),
+  revoke: (id: number) => api.delete<{ message: string }>(`/communications/${id}`),
+  read: (id: number) => api.post<{ read_at: string | null }>(`/communications/${id}/read`),
+  acknowledge: (id: number) =>
+    api.post<{ acknowledged_at: string | null }>(`/communications/${id}/acknowledge`),
 };

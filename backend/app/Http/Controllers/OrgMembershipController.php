@@ -2,16 +2,17 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Models\OrgMembership;
 use App\Models\Person;
+use App\Services\MissionaryBaselineProvisioner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
 class OrgMembershipController extends Controller
 {
+    public function __construct(private MissionaryBaselineProvisioner $baselineProvisioner) {}
+
     /**
      * List org memberships for a person.
      *
@@ -20,6 +21,7 @@ class OrgMembershipController extends Controller
     public function index(Request $request, Person $person): JsonResponse
     {
         $memberships = $person->orgMemberships()->with(['orgUnit', 'approvedBy'])->get();
+
         return response()->json($memberships);
     }
 
@@ -105,6 +107,11 @@ class OrgMembershipController extends Controller
             ]);
         }
 
+        // Provision baseline missionary role for verified local-church affiliation
+        if ($request->filled('approval_status') && $request->approval_status === 'approved') {
+            $this->baselineProvisioner->provisionIfVerified($membership);
+        }
+
         return response()->json($membership->load(['person', 'orgUnit', 'approvedBy']));
     }
 
@@ -127,8 +134,12 @@ class OrgMembershipController extends Controller
             'approved_at' => now(),
         ]);
 
+        // Provision baseline missionary role for verified local-church affiliation
+        $this->baselineProvisioner->provisionIfVerified($membership);
+
         return response()->json($membership->load(['person', 'orgUnit', 'approvedBy']));
     }
+
     /**
      * Reject an org membership.
      *
@@ -162,6 +173,7 @@ class OrgMembershipController extends Controller
     public function destroy(OrgMembership $membership): JsonResponse
     {
         $membership->delete();
+
         return response()->json(['message' => 'Membership deleted successfully.']);
     }
 }

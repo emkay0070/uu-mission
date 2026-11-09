@@ -91,17 +91,6 @@ class CampaignPolicy
         // within their org hierarchy — the service checks hierarchy when the
         // campaign exists; for creation we check they have the permission at
         // any org_unit scope level.
-        $assignments = $user->roleAssignments()
-            ->with('role.permissions')
-            ->where('scope_type', 'org_unit')
-            ->get();
-
-        foreach ($assignments as $a) {
-            if ($a->role?->permissions?->contains('code', $permission)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->auth->hasAnyOrgUnitPermission($user, $permission);
     }
 }

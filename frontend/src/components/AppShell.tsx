@@ -11,11 +11,11 @@ import { cn } from './ui';
 
 const NAV = [
   { href: '/admin/campaigns',  label: 'Campaigns',      icon: Globe },
+  { href: '/admin/people',     label: 'People',         icon: Users },
   { href: '/admin/sites',      label: 'Mission Sites',  icon: MapPin },
   { href: '/admin/teams',      label: 'Teams',          icon: Users },
   { href: '/admin/reports',    label: 'Field Reports',  icon: FileText },
   { href: '/admin/outcomes',   label: 'Outcomes',       icon: Target },
-  { href: '/admin/media',      label: 'Media',          icon: ImageIcon },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

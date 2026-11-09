@@ -60,7 +60,7 @@ export default function NewCampaignPage() {
   return (
     <div className="p-6 max-w-2xl mx-auto animate-fade-up">
       <Link
-        href="/campaigns"
+        href="/admin/campaigns"
         className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 mb-6 transition-colors"
       >
         <ArrowLeft className="w-3.5 h-3.5" /> All campaigns
@@ -136,7 +136,7 @@ export default function NewCampaignPage() {
           <button type="submit" disabled={busy} className="btn-primary">
             {busy ? <><Spinner size={4} /> Creating…</> : <><Globe className="w-4 h-4" /> Create Campaign</>}
           </button>
-          <Link href="/campaigns" className="btn-ghost">Cancel</Link>
+          <Link href="/admin/campaigns" className="btn-ghost">Cancel</Link>
         </div>
       </form>
     </div>

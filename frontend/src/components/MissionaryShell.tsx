@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { canAccessModule, moduleForPath, type WorkspaceModuleKey } from '@/lib/permissions';
+import { WorkspaceSwitcherLinks } from '@/components/WorkspaceSwitcher';
 import { cn } from './ui';
 
 /**
@@ -180,6 +181,14 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
             </div>
         </header>
         )}
+
+        {/* Workspace switcher.
+            This workspace is rendered without a header (both layouts pass
+            showHeader={false}), so the switcher sits at the top of the content
+            column instead — always reachable, on every screen size. It renders
+            nothing unless the backend advertised a second authorised
+            workspace, so a single-workspace missionary sees no change. */}
+        <WorkspaceSwitcherLinks className="px-4 py-3 lg:px-6" />
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">

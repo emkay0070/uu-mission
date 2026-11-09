@@ -6,6 +6,7 @@ use App\Models\Campaign;
 use App\Models\MissionSite;
 use App\Models\OrgUnit;
 use App\Models\Permission;
+use App\Models\ResourceDistributionRequest;
 use App\Models\RolePermissionVersion;
 use App\Models\Team;
 use App\Models\User;
@@ -722,6 +723,45 @@ class AuthorizationService
     }
 
     // ── Resource distribution review ──────────────────────────────────────────
+
+    /**
+     * Whether the user may approve or reject a resource distribution request.
+     *
+     * Requires resources.approve_distribute:
+     *   - globally, or
+     *   - for private-audience requests, at the resource's origin assignment
+     *     scope, or
+     *   - at the request's audience target scope
+     *     (org unit / campaign / site / team).
+     */
+    public function canApproveDistribute(User $user, ResourceDistributionRequest $request): bool
+    {
+        if ($this->hasGlobalPermission($user, 'resources.approve_distribute')) {
+            return true;
+        }
+
+        if ($request->audience_type === 'private') {
+            $origin = UserRoleAssignment::find((int) $request->resource?->origin_assignment_id);
+            if (! $origin) {
+                return false;
+            }
+
+            [$scopeType, $scopeId] = $this->assignmentScope($origin);
+
+            return $scopeType !== ''
+                && $this->hasPermissionAtAssignmentScope($user, 'resources.approve_distribute', $scopeType, $scopeId);
+        }
+
+        return $this->hasPermissionForDistributionTarget(
+            $user,
+            'resources.approve_distribute',
+            $request->audience_type,
+            $request->target_org_unit_id,
+            $request->target_campaign_id,
+            $request->target_site_id,
+            $request->target_team_id
+        );
+    }
 
     /**
      * Resolve a permission at one distribution request's audience target scope.

@@ -34,7 +34,7 @@ export default function CampaignsPage() {
           <h1 className="text-xl font-bold text-slate-100">Campaigns</h1>
           <p className="text-sm text-slate-400 mt-0.5">All mission campaigns within your authorized scope.</p>
         </div>
-        <Link href="/campaigns/new" className="btn-primary btn-sm">
+        <Link href="/admin/campaigns/new" className="btn-primary btn-sm">
           <Plus className="w-3.5 h-3.5" /> New Campaign
         </Link>
       </div>

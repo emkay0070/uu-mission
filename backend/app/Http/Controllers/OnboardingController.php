@@ -2,21 +2,24 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\MissionaryProfile;
+use App\Models\OrgMembership;
 use App\Models\Person;
 use App\Models\PersonAddress;
-use App\Models\PersonSkill;
 use App\Models\PersonLanguage;
 use App\Models\PersonMissionExperience;
+use App\Models\PersonSkill;
 use App\Models\PersonTraining;
-use App\Models\OrgMembership;
-use App\Models\OrgUnit;
+use App\Services\MissionaryBaselineProvisioner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class OnboardingController extends Controller
 {
+    public function __construct(private MissionaryBaselineProvisioner $baselineProvisioner) {}
+
     /**
      * Register a person with complete onboarding information.
      *
@@ -80,7 +83,9 @@ class OnboardingController extends Controller
                         'nationality' => $personalData['nationality'] ?? null,
                     ]);
                 } else {
-                    // Create new person (admin registering someone else)
+                    // Create new person (self-onboarding or admin registering
+                    // someone else). Link the person to the authenticated user
+                    // when self-onboarding so that $user->person resolves.
                     $person = Person::create([
                         'first_name' => $personalData['first_name'],
                         'middle_name' => $personalData['middle_name'] ?? null,
@@ -91,6 +96,10 @@ class OnboardingController extends Controller
                         'nationality' => $personalData['nationality'] ?? null,
                         'registered_by_user_id' => $request->user()->id,
                     ]);
+
+                    if (! $person->user_id && $request->user()->id) {
+                        $person->update(['user_id' => $request->user()->id]);
+                    }
                 }
             }
 
@@ -101,7 +110,10 @@ class OnboardingController extends Controller
 
             // Section 3: Church Affiliation
             if ($request->filled('church_affiliation')) {
-                $this->handleChurchAffiliation($request->church_affiliation, $person, $request->user());
+                $membership = $this->handleChurchAffiliation($request->church_affiliation, $person, $request->user());
+                if ($membership) {
+                    $this->baselineProvisioner->provisionIfVerified($membership);
+                }
             }
 
             // Section 4: Ministry Profile (only for missionary mode)
@@ -116,8 +128,8 @@ class OnboardingController extends Controller
 
             // Create MissionaryProfile for missionary or upgrade mode
             if ($mode === 'missionary' || $mode === 'upgrade') {
-                if (!$person->missionaryProfile) {
-                    \App\Models\MissionaryProfile::create([
+                if (! $person->missionaryProfile) {
+                    MissionaryProfile::create([
                         'person_id' => $person->id,
                         'deployment_status' => 'available',
                     ]);
@@ -154,7 +166,7 @@ class OnboardingController extends Controller
         ]);
 
         // Residence address
-        if (!empty($residenceData)) {
+        if (! empty($residenceData)) {
             PersonAddress::create([
                 'person_id' => $person->id,
                 'country' => $residenceData['country'] ?? null,
@@ -172,30 +184,42 @@ class OnboardingController extends Controller
     /**
      * Handle church affiliation section.
      */
-    private function handleChurchAffiliation(array $data, Person $person, $user): void
+    private function handleChurchAffiliation(array $data, Person $person, $user): ?OrgMembership
     {
         if (empty($data['local_church_id'])) {
-            return;
+            return null;
         }
 
-        // Check for duplicate membership
+        // Check for duplicate active membership
         $existing = OrgMembership::where('person_id', $person->id)
             ->where('org_unit_id', $data['local_church_id'])
             ->whereNull('ended_on')
             ->first();
 
         if ($existing) {
-            return; // Skip if already has membership
+            // If the existing membership is pending, leave it as-is so an
+            // authorised approval can still process it. Do not auto-approve.
+            return null;
         }
 
+        // Under the current rollout policy, home local-church affiliations
+        // are automatically verified. Under a future mandatory-verification
+        // rollout (config disabled), memberships are created 'pending' and
+        // require authorised approval before the baseline role is provisioned.
+        $approvalStatus = $this->baselineProvisioner->autoVerifyHomeAffiliation()
+            ? 'approved'
+            : 'pending';
+
         // Create simple church affiliation record
-        OrgMembership::create([
+        $membership = OrgMembership::create([
             'person_id' => $person->id,
             'org_unit_id' => $data['local_church_id'],
             'membership_type' => 'member',
             'joined_on' => now()->toDateString(),
-            'approval_status' => 'approved',
+            'approval_status' => $approvalStatus,
         ]);
+
+        return $membership;
     }
 
     /**
@@ -204,7 +228,7 @@ class OnboardingController extends Controller
     private function handleMinistryProfile(array $data, Person $person): void
     {
         // Skills
-        if (!empty($data['skills'])) {
+        if (! empty($data['skills'])) {
             foreach ($data['skills'] as $skill) {
                 PersonSkill::create([
                     'person_id' => $person->id,
@@ -218,7 +242,7 @@ class OnboardingController extends Controller
         }
 
         // Languages
-        if (!empty($data['languages'])) {
+        if (! empty($data['languages'])) {
             foreach ($data['languages'] as $language) {
                 PersonLanguage::updateOrCreate(
                     [
@@ -235,7 +259,7 @@ class OnboardingController extends Controller
         }
 
         // Mission experience
-        if (!empty($data['mission_experience'])) {
+        if (! empty($data['mission_experience'])) {
             foreach ($data['mission_experience'] as $experience) {
                 PersonMissionExperience::create([
                     'person_id' => $person->id,
@@ -256,7 +280,7 @@ class OnboardingController extends Controller
     private function handleReadiness(array $data, Person $person): void
     {
         // Training
-        if (!empty($data['training'])) {
+        if (! empty($data['training'])) {
             foreach ($data['training'] as $training) {
                 PersonTraining::create([
                     'person_id' => $person->id,
@@ -272,9 +296,9 @@ class OnboardingController extends Controller
         }
 
         // Store readiness notes in person notes
-        if (!empty($data['readiness_notes'])) {
+        if (! empty($data['readiness_notes'])) {
             $person->update([
-                'notes' => ($person->notes ?? '') . "\n\nReadiness: " . $data['readiness_notes'],
+                'notes' => ($person->notes ?? '')."\n\nReadiness: ".$data['readiness_notes'],
             ]);
         }
     }
@@ -303,7 +327,10 @@ class OnboardingController extends Controller
                     $this->handleContactResidence($data, $person);
                     break;
                 case 'church_affiliation':
-                    $this->handleChurchAffiliation($data, $person, $request->user());
+                    $membership = $this->handleChurchAffiliation($data, $person, $request->user());
+                    if ($membership) {
+                        $this->baselineProvisioner->provisionIfVerified($membership);
+                    }
                     break;
                 case 'ministry_profile':
                     $this->handleMinistryProfile($data, $person);

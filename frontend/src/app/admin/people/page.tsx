@@ -2,18 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, Mail, User, MoreVertical, Edit, UserPlus } from 'lucide-react';
+import { Plus, Search, Mail, User, MoreVertical, UserPlus } from 'lucide-react';
 import PersonOnboardingWizard from '@/components/PersonOnboardingWizard';
 import SimplePersonRegistration from '@/components/SimplePersonRegistration';
 import InvitationManagement from '@/components/InvitationManagement';
 import { useAuthStore } from '@/store/auth';
+import { peopleApi, outreachContactsApi } from '@/lib/api';
+import AddOutreachContactModal from '@/components/admin/AddOutreachContactModal';
 
 interface Person {
   id: number;
   first_name: string;
   last_name: string;
   email?: string;
-  phone?: string;
+  phone?: string | null;
   missionary_profile?: any;
 }
 
@@ -28,6 +30,7 @@ export default function PeoplePage() {
   const [showSimpleRegistration, setShowSimpleRegistration] = useState(false);
   const [showInvitationManagement, setShowInvitationManagement] = useState(false);
   const [activeTab, setActiveTab] = useState<'people' | 'outreach'>('people');
+  const [showAddOutreach, setShowAddOutreach] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -41,12 +44,7 @@ export default function PeoplePage() {
   const fetchPeople = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/v1/people?include=missionary_profile', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('uu_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await peopleApi.list({ include: 'missionary_profile' });
       setPeople(data.data || []);
     } catch (error) {
       console.error('Failed to fetch people:', error);
@@ -58,12 +56,7 @@ export default function PeoplePage() {
   const fetchOutreachContacts = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/v1/outreach-contacts', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('uu_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await outreachContactsApi.list();
       setOutreachContacts(data.data || []);
     } catch (error) {
       console.error('Failed to fetch outreach contacts:', error);
@@ -123,6 +116,7 @@ export default function PeoplePage() {
   }
 
   return (
+    <>
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -156,7 +150,7 @@ export default function PeoplePage() {
             </>
           ) : (
             <button
-              onClick={() => {/* TODO: Add outreach contact creation modal */}}
+              onClick={() => setShowAddOutreach(true)}
               className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -274,7 +268,6 @@ export default function PeoplePage() {
                           onClick={() => router.push(`/admin/people/${person.id}`)}
                           className="p-2 text-slate-400 hover:text-brand-400 hover:bg-slate-700 rounded-lg transition-colors"
                         >
-                          <Edit className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -322,7 +315,6 @@ export default function PeoplePage() {
                         onClick={() => router.push(`/admin/outreach-contacts/${contact.id}`)}
                         className="p-2 text-slate-400 hover:text-brand-400 hover:bg-slate-700 rounded-lg transition-colors"
                       >
-                        <Edit className="w-4 h-4" />
                       </button>
                     </td>
                   </tr>
@@ -333,5 +325,13 @@ export default function PeoplePage() {
         )}
       </div>
     </div>
+    {showAddOutreach && (
+      <AddOutreachContactModal
+        open={showAddOutreach}
+        onClose={() => setShowAddOutreach(false)}
+        onCreated={() => fetchOutreachContacts()}
+      />
+    )}
+    </>
   );
 }

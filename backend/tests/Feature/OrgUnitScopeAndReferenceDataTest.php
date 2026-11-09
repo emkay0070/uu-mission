@@ -14,7 +14,9 @@ use App\Models\SystemRole;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
+use Tests\Traits\PublishesRolePermissions;
 
 /**
  * OrgUnitScopeTest — verifies organizational-unit-scoped access.
@@ -45,16 +47,25 @@ use Tests\TestCase;
  */
 class OrgUnitScopeAndReferenceDataTest extends TestCase
 {
+    use PublishesRolePermissions;
     use RefreshDatabase;
 
     private OrgUnit $ugandaUnion;
+
     private OrgUnit $cuc;          // Central Uganda Conference
+
     private OrgUnit $liraDistrict;
+
     private OrgUnit $unrelatedOrg;
+
     private Campaign $campaignAlpha; // lead = CUC
+
     private Campaign $campaignBeta;  // lead = unrelatedOrg
+
     private MissionSite $siteAlpha;
+
     private SystemRole $roleDirector;
+
     private SystemRole $roleCampaignLeader;
 
     protected function setUp(): void
@@ -67,41 +78,41 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
     // ORG-UNIT SCOPE TESTS
     // ══════════════════════════════════════════════════════════════════════════
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function union_director_can_view_campaign_within_their_hierarchy(): void
     {
         // Uganda Union → CUC (descendant) → Campaign Alpha ✓
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->ugandaUnion);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
-             ->assertOk()
-             ->assertJsonFragment(['id' => $this->campaignAlpha->id]);
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
+            ->assertOk()
+            ->assertJsonFragment(['id' => $this->campaignAlpha->id]);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function union_director_cannot_view_campaign_outside_their_hierarchy(): void
     {
         // Uganda Union hierarchy does not contain unrelatedOrg
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->ugandaUnion);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignBeta->id}")
-             ->assertStatus(403);
+            ->getJson("/api/v1/campaigns/{$this->campaignBeta->id}")
+            ->assertStatus(403);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function conference_director_can_view_campaign_led_by_their_conference(): void
     {
         // CUC-scoped director, Campaign Alpha's lead_org_unit = CUC (direct)
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->cuc);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
-             ->assertOk();
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
+            ->assertOk();
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function district_director_cannot_access_conference_campaign(): void
     {
         // Lira District is a child of CUC — org_unit scope is NOT delegated downward.
@@ -109,46 +120,46 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->liraDistrict);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
-             ->assertStatus(403);
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}")
+            ->assertStatus(403);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function org_unit_director_cannot_list_sites_for_unrelated_campaign(): void
     {
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->ugandaUnion);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignBeta->id}/sites")
-             ->assertStatus(403);
+            ->getJson("/api/v1/campaigns/{$this->campaignBeta->id}/sites")
+            ->assertStatus(403);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function org_unit_scoped_user_can_view_stats_for_campaign_in_hierarchy(): void
     {
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->ugandaUnion);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/stats")
-             ->assertOk()
-             ->assertJsonFragment(['campaign_id' => $this->campaignAlpha->id]);
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/stats")
+            ->assertOk()
+            ->assertJsonFragment(['campaign_id' => $this->campaignAlpha->id]);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function org_unit_director_can_list_sites_in_own_hierarchy_campaign(): void
     {
         $director = $this->createUserWithOrgUnitRole($this->roleDirector, $this->cuc);
 
         $this->actingAs($director, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/sites")
-             ->assertOk();
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/sites")
+            ->assertOk();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     // REFERENCE DATA — OUTCOME TYPES
     // ══════════════════════════════════════════════════════════════════════════
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function ref_outcome_types_returns_active_types(): void
     {
         OutcomeType::factory()->create(['code' => 'test_active',   'is_active' => true]);
@@ -157,64 +168,64 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $response = $this->actingAs($leader, 'sanctum')
-             ->getJson('/api/v1/ref/outcome-types')
-             ->assertOk();
+            ->getJson('/api/v1/ref/outcome-types')
+            ->assertOk();
 
         $codes = collect($response->json())->pluck('code')->toArray();
         $this->assertContains('test_active', $codes);
         $this->assertNotContains('test_inactive', $codes);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function outcome_store_accepts_active_db_outcome_type(): void
     {
-        $type   = OutcomeType::factory()->create(['code' => 'custom_type', 'is_active' => true]);
+        $type = OutcomeType::factory()->create(['code' => 'custom_type', 'is_active' => true]);
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $this->actingAs($leader, 'sanctum')
-             ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
-                 'mission_site_id' => $this->siteAlpha->id,
-                 'outcome_type'    => 'custom_type',
-                 'outcome_date'    => now()->toDateString(),
-                 'visitor_name'    => 'Test Person',
-             ])
-             ->assertStatus(201);
+            ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
+                'mission_site_id' => $this->siteAlpha->id,
+                'outcome_type' => 'custom_type',
+                'outcome_date' => now()->toDateString(),
+                'visitor_name' => 'Test Person',
+            ])
+            ->assertStatus(201);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function outcome_store_rejects_unknown_outcome_type(): void
     {
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $this->actingAs($leader, 'sanctum')
-             ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
-                 'mission_site_id' => $this->siteAlpha->id,
-                 'outcome_type'    => 'completely_made_up_type',
-                 'outcome_date'    => now()->toDateString(),
-                 'visitor_name'    => 'Test Person',
-             ])
-             ->assertStatus(422)
-             ->assertJsonValidationErrors(['outcome_type']);
+            ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
+                'mission_site_id' => $this->siteAlpha->id,
+                'outcome_type' => 'completely_made_up_type',
+                'outcome_date' => now()->toDateString(),
+                'visitor_name' => 'Test Person',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['outcome_type']);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function outcome_store_rejects_inactive_outcome_type(): void
     {
         OutcomeType::factory()->create(['code' => 'deprecated_type', 'is_active' => false]);
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $this->actingAs($leader, 'sanctum')
-             ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
-                 'mission_site_id' => $this->siteAlpha->id,
-                 'outcome_type'    => 'deprecated_type',
-                 'outcome_date'    => now()->toDateString(),
-                 'visitor_name'    => 'Test Person',
-             ])
-             ->assertStatus(422)
-             ->assertJsonValidationErrors(['outcome_type']);
+            ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/outcomes", [
+                'mission_site_id' => $this->siteAlpha->id,
+                'outcome_type' => 'deprecated_type',
+                'outcome_date' => now()->toDateString(),
+                'visitor_name' => 'Test Person',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['outcome_type']);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function campaign_stats_returns_outcome_counts_by_type(): void
     {
         // Create two active outcome types and one inactive
@@ -225,8 +236,8 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $response = $this->actingAs($leader, 'sanctum')
-             ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/stats")
-             ->assertOk();
+            ->getJson("/api/v1/campaigns/{$this->campaignAlpha->id}/stats")
+            ->assertOk();
 
         $byType = $response->json('outcomes.by_type');
 
@@ -238,15 +249,15 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
         $this->assertArrayNotHasKey('stat_type_c', $byType);
     }
 
-    #[\PHPUnit\Framework\Attributes\Test]
+    #[Test]
     public function campaign_transition_rejects_invalid_status(): void
     {
         $leader = $this->createUserWithCampaignRole($this->roleCampaignLeader, $this->campaignAlpha);
 
         $this->actingAs($leader, 'sanctum')
-             ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/transition", ['to' => 'unknown_status'])
-             ->assertStatus(422)
-             ->assertJsonValidationErrors(['to']);
+            ->postJson("/api/v1/campaigns/{$this->campaignAlpha->id}/transition", ['to' => 'unknown_status'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['to']);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -255,37 +266,37 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
 
     private function buildFixtures(): void
     {
-        $typeUnion    = OrgUnitType::factory()->create(['code' => 'union_t']);
-        $typeConf     = OrgUnitType::factory()->create(['code' => 'conf_t']);
-        $typeDist     = OrgUnitType::factory()->create(['code' => 'dist_t']);
+        $typeUnion = OrgUnitType::factory()->create(['code' => 'union_t']);
+        $typeConf = OrgUnitType::factory()->create(['code' => 'conf_t']);
+        $typeDist = OrgUnitType::factory()->create(['code' => 'dist_t']);
 
-        $this->ugandaUnion   = OrgUnit::factory()->create(['org_unit_type_id' => $typeUnion->id, 'parent_id' => null,                       'name' => 'Uganda Union']);
-        $this->cuc           = OrgUnit::factory()->create(['org_unit_type_id' => $typeConf->id,  'parent_id' => $this->ugandaUnion->id,      'name' => 'CUC']);
-        $this->liraDistrict  = OrgUnit::factory()->create(['org_unit_type_id' => $typeDist->id,  'parent_id' => $this->cuc->id,             'name' => 'Lira District']);
-        $this->unrelatedOrg  = OrgUnit::factory()->create(['org_unit_type_id' => $typeConf->id,  'parent_id' => null,                       'name' => 'Unrelated Org']);
+        $this->ugandaUnion = OrgUnit::factory()->create(['org_unit_type_id' => $typeUnion->id, 'parent_id' => null,                       'name' => 'Uganda Union']);
+        $this->cuc = OrgUnit::factory()->create(['org_unit_type_id' => $typeConf->id,  'parent_id' => $this->ugandaUnion->id,      'name' => 'CUC']);
+        $this->liraDistrict = OrgUnit::factory()->create(['org_unit_type_id' => $typeDist->id,  'parent_id' => $this->cuc->id,             'name' => 'Lira District']);
+        $this->unrelatedOrg = OrgUnit::factory()->create(['org_unit_type_id' => $typeConf->id,  'parent_id' => null,                       'name' => 'Unrelated Org']);
 
-        $pt        = ProgrammeType::factory()->create(['code' => 'gm_ou']);
+        $pt = ProgrammeType::factory()->create(['code' => 'gm_ou']);
         $programme = Programme::factory()->create(['programme_type_id' => $pt->id, 'owning_org_unit_id' => $this->ugandaUnion->id]);
 
         $this->campaignAlpha = Campaign::factory()->create([
-            'programme_id'     => $programme->id,
+            'programme_id' => $programme->id,
             'lead_org_unit_id' => $this->cuc->id,       // CUC leads Campaign Alpha
-            'name'             => 'Alpha',
-            'status'           => 'active',
+            'name' => 'Alpha',
+            'status' => 'active',
         ]);
         $this->campaignBeta = Campaign::factory()->create([
-            'programme_id'     => $programme->id,
+            'programme_id' => $programme->id,
             'lead_org_unit_id' => $this->unrelatedOrg->id, // different hierarchy
-            'name'             => 'Beta',
-            'status'           => 'active',
+            'name' => 'Beta',
+            'status' => 'active',
         ]);
 
         $this->siteAlpha = MissionSite::factory()->create([
             'campaign_id' => $this->campaignAlpha->id,
-            'name'        => 'Alpha Site 1',
+            'name' => 'Alpha Site 1',
         ]);
 
-        $this->roleDirector      = $this->createRole('union_director_ou', 'org_unit', $this->directorPerms());
+        $this->roleDirector = $this->createRole('union_director_ou', 'org_unit', $this->directorPerms());
         $this->roleCampaignLeader = $this->createRole('campaign_leader_ou', 'campaign', $this->leaderPerms());
     }
 
@@ -293,11 +304,11 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
     {
         $role = SystemRole::factory()->create(['code' => $code, 'scope_type' => $scopeType]);
 
-        $permIds = collect($permCodes)->map(fn ($pc) =>
-            Permission::firstOrCreate(['code' => $pc], ['label' => $pc, 'module' => explode('.', $pc)[0]])->id
+        $permIds = collect($permCodes)->map(fn ($pc) => Permission::firstOrCreate(['code' => $pc], ['label' => $pc, 'module' => explode('.', $pc)[0]])->id
         )->toArray();
 
-        $role->permissions()->sync($permIds);
+        $this->publishRolePermissions($role, $permIds);
+
         return $role;
     }
 
@@ -305,11 +316,12 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
     {
         $user = User::factory()->create();
         UserRoleAssignment::create([
-            'user_id'            => $user->id,
-            'system_role_id'     => $role->id,
-            'scope_type'         => 'org_unit',
+            'user_id' => $user->id,
+            'system_role_id' => $role->id,
+            'scope_type' => 'org_unit',
             'scoped_org_unit_id' => $orgUnit->id,
         ]);
+
         return $user;
     }
 
@@ -317,11 +329,12 @@ class OrgUnitScopeAndReferenceDataTest extends TestCase
     {
         $user = User::factory()->create();
         UserRoleAssignment::create([
-            'user_id'            => $user->id,
-            'system_role_id'     => $role->id,
-            'scope_type'         => 'campaign',
+            'user_id' => $user->id,
+            'system_role_id' => $role->id,
+            'scope_type' => 'campaign',
             'scoped_campaign_id' => $campaign->id,
         ]);
+
         return $user;
     }
 

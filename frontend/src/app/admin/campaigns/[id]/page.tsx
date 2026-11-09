@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  campaignsApi, sitesApi, teamsApi, assignmentsApi, reportsApi, outcomesApi, activitiesApi, refApi, roleAssignmentsApi, departmentsApi, api,
+  campaignsApi, sitesApi, teamsApi, assignmentsApi, reportsApi, outcomesApi, activitiesApi, refApi, roleAssignmentsApi, departmentsApi, peopleApi, api,
   type Campaign, type CampaignStats, type MissionSite, type Team,
   type Assignment, type FieldReport, type MissionOutcome, type OutcomeType, type Activity, type CampaignObjective, type Department,
 } from '@/lib/api';
@@ -92,7 +92,7 @@ export default function CampaignDetailPage() {
   if (error) return (
     <div className="p-6 max-w-2xl mx-auto mt-10">
       <ErrorBanner message={error} />
-      <Link href="/campaigns" className="btn-ghost mt-4 inline-flex">
+      <Link href="/admin/campaigns" className="btn-ghost mt-4 inline-flex">
         <ArrowLeft className="w-4 h-4" /> Back to campaigns
       </Link>
     </div>
@@ -730,7 +730,7 @@ function AssignmentsTab({ campaignId }: { campaignId: number }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<{
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<{
     person_id: string;
     mission_site_id: string;
     assigned_team_id: string;
@@ -762,6 +762,49 @@ function AssignmentsTab({ campaignId }: { campaignId: number }) {
       .catch((e: ApiError) => setError(e.message))
       .finally(() => setLoading(false));
   }, [campaignId, filter]);
+
+  // ── System role / deployment context interplay ─────────────────────────────
+  // A role's authorization scope comes from the role itself (its scope_type),
+  // never from the deployment team. The dropdown therefore only offers roles
+  // the current deployment can satisfy. The backend revalidates everything, so
+  // this filtering is a usability aid, not an authorization boundary.
+  const watchedSiteId = watch('mission_site_id');
+  const watchedTeamId = watch('assigned_team_id');
+  const watchedRoleId = watch('system_role_id');
+
+  // When the site changes, a team that belongs to a different site is no longer
+  // valid for this deployment, so it is cleared rather than silently kept.
+  useEffect(() => {
+    const team = teams.find(t => String(t.id) === String(watchedTeamId));
+    if (!team) return;
+    if (team.mission_site_id != null && String(team.mission_site_id) !== String(watchedSiteId)) {
+      setValue('assigned_team_id', '');
+    }
+  }, [watchedSiteId, watchedTeamId, teams, setValue]);
+
+  const compatibleSystemRoles = systemRoles.filter((sr) => {
+    switch (sr.scope_type) {
+      case 'campaign': return true;
+      case 'site':     return Boolean(watchedSiteId);
+      case 'team':     return Boolean(watchedTeamId);
+      default:         return false; // global / org_unit roles are not offered here
+    }
+  });
+
+  // Keep an already-chosen role visible even if the deployment changed, so the
+  // selection is never dropped silently; the backend explains why it is invalid.
+  const roleOptions = [...compatibleSystemRoles];
+  const selectedRole = systemRoles.find(sr => String(sr.id) === String(watchedRoleId));
+  if (selectedRole && !roleOptions.some(r => r.id === selectedRole.id)) {
+    roleOptions.unshift(selectedRole);
+  }
+
+  const hasDeploymentRoles = systemRoles.some(sr => ['campaign', 'site', 'team'].includes(sr.scope_type));
+  const roleHint = !hasDeploymentRoles
+    ? 'No system roles are available for campaign deployments.'
+    : watchedSiteId || watchedTeamId
+      ? 'Only roles this deployment can satisfy are listed.'
+      : 'Select a site or team to unlock site- and team-scoped roles.';
 
   const handleCreateAssignment = async (data: any) => {
     setIsSubmitting(true);
@@ -949,10 +992,11 @@ function AssignmentsTab({ campaignId }: { campaignId: number }) {
                 className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-surface-border text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 <option value="">No system role</option>
-                {systemRoles.filter(sr => ['campaign', 'site', 'team'].includes(sr.scope_type)).map(sr => (
+                {roleOptions.map(sr => (
                   <option key={sr.id} value={sr.id}>{sr.label} ({sr.scope_type})</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">{roleHint}</p>
             </div>
 
             <div>
@@ -1042,10 +1086,11 @@ function AssignmentsTab({ campaignId }: { campaignId: number }) {
                 className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-surface-border text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 <option value="">No system role</option>
-                {systemRoles.filter(sr => ['campaign', 'site', 'team'].includes(sr.scope_type)).map(sr => (
+                {roleOptions.map(sr => (
                   <option key={sr.id} value={sr.id}>{sr.label} ({sr.scope_type})</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-slate-500">{roleHint}</p>
             </div>
 
             <div>
@@ -1098,6 +1143,7 @@ function AssignmentsTab({ campaignId }: { campaignId: number }) {
 function DepartmentsTab({ campaignId }: { campaignId: number }) {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [sites, setSites] = useState<MissionSite[]>([]);
+  const [people, setPeople] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -1114,12 +1160,14 @@ function DepartmentsTab({ campaignId }: { campaignId: number }) {
     const load = async () => {
       setLoading(true);
       try {
-        const [depts, sts] = await Promise.all([
+        const [depts, sts, ppl] = await Promise.all([
           departmentsApi.listForCampaign(campaignId),
           sitesApi.list(campaignId),
+          peopleApi.list({ campaign_id: campaignId }),
         ]);
         setDepartments(depts);
         setSites(sts);
+        setPeople((ppl as any)?.data ?? ppl ?? []);
       } catch (e: unknown) {
         const err = e as ApiError;
         setError(err.message || 'Failed to load departments');
@@ -1221,6 +1269,19 @@ function DepartmentsTab({ campaignId }: { campaignId: number }) {
                 <option value="">Campaign-wide department</option>
                 {sites.map(s => (
                   <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Department Leader (Optional)</label>
+              <select
+                {...register('leader_person_id')}
+                className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-surface-border text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">No leader assigned</option>
+                {people.map((p: any) => (
+                  <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>
                 ))}
               </select>
             </div>

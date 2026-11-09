@@ -28,17 +28,17 @@ return new class extends Migration
         ];
 
         foreach ($stageMap as $oldCode => $newCode) {
-            DB::statement("
+            DB::statement('
                 UPDATE engagement_stage_histories h
                 SET from_stage_id = (SELECT id FROM engagement_stages WHERE code = ?)
                 WHERE from_stage = ?
-            ", [$newCode, $oldCode]);
+            ', [$newCode, $oldCode]);
 
-            DB::statement("
+            DB::statement('
                 UPDATE engagement_stage_histories h
                 SET to_stage_id = (SELECT id FROM engagement_stages WHERE code = ?)
                 WHERE to_stage = ?
-            ", [$newCode, $oldCode]);
+            ', [$newCode, $oldCode]);
         }
 
         // Set default stage for NULL values
@@ -80,7 +80,7 @@ return new class extends Migration
                 'baptized',
                 'member',
                 'inactive',
-                'lost_contact'
+                'lost_contact',
             ])->nullable()->after('person_id');
 
             $table->enum('to_stage', [
@@ -92,7 +92,7 @@ return new class extends Migration
                 'baptized',
                 'member',
                 'inactive',
-                'lost_contact'
+                'lost_contact',
             ])->nullable()->after('from_stage');
         });
 
@@ -110,17 +110,17 @@ return new class extends Migration
         ];
 
         foreach ($stageMap as $newCode => $oldCode) {
-            DB::statement("
+            DB::statement('
                 UPDATE engagement_stage_histories h
                 SET from_stage = ?
                 WHERE from_stage_id = (SELECT id FROM engagement_stages WHERE code = ?)
-            ", [$oldCode, $newCode]);
+            ', [$oldCode, $newCode]);
 
-            DB::statement("
+            DB::statement('
                 UPDATE engagement_stage_histories h
                 SET to_stage = ?
                 WHERE to_stage_id = (SELECT id FROM engagement_stages WHERE code = ?)
-            ", [$oldCode, $newCode]);
+            ', [$oldCode, $newCode]);
         }
 
         // Drop foreign key columns
@@ -131,31 +131,8 @@ return new class extends Migration
             $table->dropColumn('from_stage_id');
         });
 
-        // Make ENUM columns non-nullable
-        Schema::table('engagement_stage_histories', function (Blueprint $table) {
-            $table->enum('from_stage', [
-                'new_contact',
-                'interested',
-                'studying',
-                'decision_made',
-                'baptism_candidate',
-                'baptized',
-                'member',
-                'inactive',
-                'lost_contact'
-            ])->nullable(false)->change();
-
-            $table->enum('to_stage', [
-                'new_contact',
-                'interested',
-                'studying',
-                'decision_made',
-                'baptism_candidate',
-                'baptized',
-                'member',
-                'inactive',
-                'lost_contact'
-            ])->nullable(false)->change();
-        });
+        // Make ENUM columns non-nullable using raw SQL for PostgreSQL compatibility
+        DB::statement('ALTER TABLE engagement_stage_histories ALTER COLUMN from_stage SET NOT NULL');
+        DB::statement('ALTER TABLE engagement_stage_histories ALTER COLUMN to_stage SET NOT NULL');
     }
 };

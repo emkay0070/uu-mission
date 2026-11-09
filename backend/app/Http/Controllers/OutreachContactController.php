@@ -9,6 +9,7 @@ use App\Models\Campaign;
 use App\Models\MissionSite;
 use App\Models\EngagementStage;
 use App\Services\AuthorizationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -58,11 +59,19 @@ class OutreachContactController extends Controller
             $query->where('is_active', $request->is_active);
         }
 
-        // Search by person name
+        // Search by person name or by the village the contact was met in.
+        //
+        // Both are advertised by the Site Operations outreach panel, so the
+        // endpoint accepts both now that filtering happens server-side instead
+        // of over an already-loaded page.
         if ($request->filled('search')) {
-            $query->whereHas('person', function ($q) use ($request) {
-                $q->where('first_name', 'ilike', "%{$request->search}%")
-                  ->orWhere('last_name', 'ilike', "%{$request->search}%");
+            $search = $request->search;
+            $query->where(function (Builder $q) use ($search) {
+                $q->where('village', 'ilike', "%{$search}%")
+                  ->orWhereHas('person', function (Builder $person) use ($search) {
+                      $person->where('first_name', 'ilike', "%{$search}%")
+                             ->orWhere('last_name', 'ilike', "%{$search}%");
+                  });
             });
         }
 

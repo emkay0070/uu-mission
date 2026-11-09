@@ -6,9 +6,11 @@
     "dev": "next dev --port 3100",
     "build": "next build",
     "start": "next start --port 3100",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node --experimental-strip-types --test src/components/resources/__tests__/resources.test.ts"
   },
   "dependencies": {
+    "@embedpdf/react-pdf-viewer": "^2.15.1",
     "@tailwindcss/postcss": "^4.3.3",
     "clsx": "^2.1.0",
     "framer-motion": "^11.0.0",

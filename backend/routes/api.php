@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\BaptismRecordController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\CampaignObjectiveController;
+use App\Http\Controllers\CommunicationController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\FieldReportController;
 use App\Http\Controllers\InvitationController;
@@ -22,6 +23,17 @@ use App\Http\Controllers\OrgMembershipController;
 use App\Http\Controllers\OutreachContactController;
 use App\Http\Controllers\OutreachEncounterController;
 use App\Http\Controllers\PersonController;
+use App\Http\Controllers\ResourceAIController;
+use App\Http\Controllers\ResourceBookmarkController;
+use App\Http\Controllers\ResourceCategoryController;
+use App\Http\Controllers\ResourceController;
+use App\Http\Controllers\ResourceDistributionController;
+use App\Http\Controllers\ResourceDownloadController;
+use App\Http\Controllers\ResourceFileController;
+use App\Http\Controllers\ResourceHighlightController;
+use App\Http\Controllers\ResourceNoteController;
+use App\Http\Controllers\ResourceReadingProgressController;
+use App\Http\Controllers\ResourceSavedController;
 use App\Http\Controllers\SiteLogisticsController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\TranslationController;
@@ -123,6 +135,19 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/my-training/{trainingId}', [WorkspaceController::class, 'removeMyTraining']);
         Route::post('/my-profile-photo', [WorkspaceController::class, 'uploadProfilePhoto']);
         Route::post('/my-cover-photo', [WorkspaceController::class, 'uploadCoverPhoto']);
+    });
+
+    // ── Communication Centre (missionary's official communications) ────────
+    Route::prefix('communications')->group(function () {
+        Route::get('/', [CommunicationController::class, 'index']);
+        Route::get('/unread-count', [CommunicationController::class, 'unreadCount']);
+        Route::get('/requiring-acknowledgement', [CommunicationController::class, 'requiringAcknowledgement']);
+        Route::post('/', [CommunicationController::class, 'store']);
+        Route::get('/{communication}', [CommunicationController::class, 'show']);
+        Route::patch('/{communication}', [CommunicationController::class, 'update']);
+        Route::delete('/{communication}', [CommunicationController::class, 'destroy']);
+        Route::post('/{communication}/read', [CommunicationController::class, 'read']);
+        Route::post('/{communication}/acknowledge', [CommunicationController::class, 'acknowledge']);
     });
 
     // ── Campaigns ─────────────────────────────────────────────────────────────
@@ -457,5 +482,103 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{uuid}/url', [MediaController::class, 'getUrl']);
         Route::get('/{uuid}/thumbnail', [MediaController::class, 'getThumbnailUrl']);
     });
+
+    // ── Resource Library ─────────────────────────────────────────────────────────────
+    Route::prefix('resources')->group(function () {
+        Route::get('/distribution-targets', [ResourceDistributionController::class, 'targets']);
+        Route::get('/distribution-requests', [ResourceDistributionController::class, 'index']);
+        Route::post('/{resource}/distribution-requests', [ResourceDistributionController::class, 'store']);
+        Route::post('/distribution-requests/{distributionRequest}/resubmit', [ResourceDistributionController::class, 'resubmit']);
+        Route::post('/distribution-requests/{distributionRequest}/decision', [ResourceDistributionController::class, 'decide']);
+        Route::post('/distribution-requests/{distributionRequest}/revoke', [ResourceDistributionController::class, 'revoke']);
+        // Static routes must be declared before the wildcard /{resource} route,
+        // otherwise their first segment is captured as a resource id.
+        Route::get('/reading-resources', [ResourceReadingProgressController::class, 'index']);
+        Route::get('/saved-resources', [ResourceSavedController::class, 'index']);
+
+        // Public resource listing and details
+        Route::get('/', [ResourceController::class, 'index']);
+        Route::get('/my-drafts', [ResourceController::class, 'myDrafts']);
+        Route::post('/', [ResourceController::class, 'store']);
+        Route::get('/{resource}', [ResourceController::class, 'show']);
+        Route::get('/{resource}/versions', [ResourceController::class, 'versions']);
+        Route::patch('/{resource}', [ResourceController::class, 'update']);
+        Route::post('/{resource}/replace-file', [ResourceController::class, 'replaceFile']);
+        Route::post('/{resource}/archive', [ResourceController::class, 'archive']);
+
+        // Secure file access
+        Route::get('/{resource}/preview', [ResourceFileController::class, 'preview']);
+        Route::get('/{resource}/download', [ResourceFileController::class, 'download']);
+        Route::get('/{resource}/thumbnail', [ResourceFileController::class, 'thumbnail']);
+        Route::get('/{resource}/versions/{version}/preview', [ResourceFileController::class, 'previewVersion']);
+        Route::get('/{resource}/versions/{version}/download', [ResourceFileController::class, 'downloadVersion']);
+
+        // Reading progress
+        Route::get('/{resource}/progress', [ResourceReadingProgressController::class, 'show']);
+        Route::post('/{resource}/progress', [ResourceReadingProgressController::class, 'store']);
+
+        // Bookmarks
+        Route::get('/{resource}/bookmarks', [ResourceBookmarkController::class, 'index']);
+        Route::post('/{resource}/bookmarks', [ResourceBookmarkController::class, 'store']);
+        Route::delete('/{resource}/bookmarks/{bookmark}', [ResourceBookmarkController::class, 'destroy']);
+
+        // Highlights
+        Route::get('/{resource}/highlights', [ResourceHighlightController::class, 'index']);
+        Route::post('/{resource}/highlights', [ResourceHighlightController::class, 'store']);
+        Route::patch('/{resource}/highlights/{highlight}', [ResourceHighlightController::class, 'update']);
+        Route::delete('/{resource}/highlights/{highlight}', [ResourceHighlightController::class, 'destroy']);
+
+        // Notes
+        Route::get('/{resource}/notes', [ResourceNoteController::class, 'index']);
+        Route::post('/{resource}/notes', [ResourceNoteController::class, 'store']);
+        Route::patch('/{resource}/notes/{note}', [ResourceNoteController::class, 'update']);
+        Route::delete('/{resource}/notes/{note}', [ResourceNoteController::class, 'destroy']);
+
+        // Saved resources
+        Route::post('/{resource}/save', [ResourceSavedController::class, 'store']);
+        Route::delete('/{resource}/save', [ResourceSavedController::class, 'destroy']);
+        Route::get('/{resource}/saved-status', [ResourceSavedController::class, 'status']);
+
+        // Downloads
+        Route::post('/{resource}/download-record', [ResourceDownloadController::class, 'store']);
+        Route::patch('/{resource}/download-record', [ResourceDownloadController::class, 'update']);
+        Route::delete('/{resource}/download-record', [ResourceDownloadController::class, 'destroy']);
+        Route::get('/{resource}/download-status', [ResourceDownloadController::class, 'status']);
+
+        // AI Learning Companion
+        Route::prefix('/{resource}/ai')->group(function () {
+            Route::post('/chat', [ResourceAIController::class, 'chat']);
+            Route::get('/conversations', [ResourceAIController::class, 'conversations']);
+        });
+
+        // Learning notes
+        Route::prefix('/{resource}/learning-notes')->group(function () {
+            Route::get('/', [ResourceAIController::class, 'learningNotes']);
+            Route::post('/', [ResourceAIController::class, 'createLearningNote']);
+            Route::put('/{note}', [ResourceAIController::class, 'updateLearningNote']);
+            Route::delete('/{note}', [ResourceAIController::class, 'deleteLearningNote']);
+        });
+    });
+
+    // AI Learning Companion (global)
+    Route::prefix('ai')->group(function () {
+        Route::get('/conversations', [ResourceAIController::class, 'allConversations']);
+        Route::get('/conversations/{conversation}', [ResourceAIController::class, 'getConversation']);
+        Route::delete('/conversations/{conversation}', [ResourceAIController::class, 'deleteConversation']);
+        Route::post('/messages/{message}/retry', [ResourceAIController::class, 'retryMessage']);
+        Route::post('/saved-explanations', [ResourceAIController::class, 'saveExplanation']);
+        Route::get('/saved-explanations', [ResourceAIController::class, 'savedExplanations']);
+    });
+
+    // Saved and downloaded resources (personal library)
+    Route::get('/saved-resources', [ResourceSavedController::class, 'index']);
+    Route::get('/downloaded-resources', [ResourceDownloadController::class, 'index']);
+
+    // Resource categories (reference data)
+    Route::get('/resource-categories', [ResourceCategoryController::class, 'index']);
+    Route::get('/resource-categories/{category}', [ResourceCategoryController::class, 'show']);
+
+    // User's reading progress across all resources
+    Route::get('/reading-progress', [ResourceReadingProgressController::class, 'index']);
 
 });
