@@ -3,16 +3,17 @@
 namespace App\Services;
 
 use App\Models\Campaign;
-use App\Models\FieldReport;
-use App\Models\MissionOutcome;
 use App\Models\MissionSite;
 use App\Models\OrgUnit;
+use App\Models\Permission;
+use App\Models\RolePermissionVersion;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * AuthorizationService — resolves user scope and permission checks.
@@ -47,8 +48,7 @@ class AuthorizationService
      */
     public function hasPermissionForCampaign(User $user, string|array $permissions, Campaign $campaign): bool
     {
-        return $this->resolveEffectiveAssignments($user, $campaign)
-                    ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permissions));
+        return $this->effectivePermissionDecision($this->resolveEffectiveAssignments($user, $campaign), $permissions);
     }
 
     /**
@@ -69,8 +69,10 @@ class AuthorizationService
         MissionSite $site,
         bool $includeTeamScopedAssignments = true
     ): bool {
-        return $this->resolveEffectiveAssignments($user, $site->campaign, $site, null, $includeTeamScopedAssignments)
-                    ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permissions));
+        return $this->effectivePermissionDecision(
+            $this->resolveEffectiveAssignments($user, $site->campaign, $site, null, $includeTeamScopedAssignments),
+            $permissions
+        );
     }
 
     /**
@@ -80,8 +82,10 @@ class AuthorizationService
      */
     public function hasPermissionForTeam(User $user, string|array $permissions, Team $team): bool
     {
-        return $this->resolveEffectiveAssignments($user, $team->campaign, $team->site, $team)
-                    ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permissions));
+        return $this->effectivePermissionDecision(
+            $this->resolveEffectiveAssignments($user, $team->campaign, $team->site, $team),
+            $permissions
+        );
     }
 
     /**
@@ -89,9 +93,10 @@ class AuthorizationService
      */
     public function hasGlobalPermission(User $user, string $permission): bool
     {
-        return $this->getActiveAssignments($user)
-            ->filter(fn ($a) => $a->scope_type === 'global')
-            ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permission));
+        return $this->effectivePermissionDecision(
+            $this->getActiveAssignments($user)->where('scope_type', 'global'),
+            $permission
+        );
     }
 
     /**
@@ -100,40 +105,69 @@ class AuthorizationService
      */
     public function hasPermissionForOrgUnit(User $user, string $permission, int $orgUnitId): bool
     {
-        // Check for exact match. The scope id is cast to int because Eloquent
-        // may hand back the raw database value as a string, and a strict
-        // comparison against an int would silently deny valid access.
-        $exactMatch = $this->getActiveAssignments($user)
-            ->filter(fn ($a) => $a->scope_type === 'org_unit' && (int) $a->scoped_org_unit_id === $orgUnitId)
-            ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permission));
+        // Collect the assignments scoped to this org unit plus those scoped to
+        // any ancestor org unit, then decide once so a denial anywhere in the
+        // applicable hierarchy wins over a broader grant.
+        $matching = $this->getActiveAssignments($user)
+            ->filter(fn (UserRoleAssignment $a) => $a->scope_type === 'org_unit'
+                && $this->orgUnitCoversOrgUnit($a->scoped_org_unit_id !== null ? (int) $a->scoped_org_unit_id : null, $orgUnitId));
 
-        if ($exactMatch) {
-            return true;
-        }
+        return $this->effectivePermissionDecision($matching, $permission);
+    }
 
-        // Check if user has permission from a parent org unit
-        $orgUnit = OrgUnit::find($orgUnitId);
-        if (!$orgUnit) {
-            return false;
-        }
+    /**
+     * Check whether the user holds a permission for AT LEAST ONE org-unit
+     * scope they are assigned to, without widening to a specific org unit.
+     *
+     * Used by policies that only need "any org-unit authority" (for example
+     * creating a new campaign), not permission over a concrete unit.
+     */
+    public function hasAnyOrgUnitPermission(User $user, string $permission): bool
+    {
+        $ids = $this->getActiveAssignments($user)
+            ->where('scope_type', 'org_unit')
+            ->pluck('scoped_org_unit_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique();
 
-        // Walk up the hierarchy checking parent org units
-        $current = $orgUnit;
-        while ($current && $current->parent_id) {
-            $parentId = (int) $current->parent_id;
+        return $ids->contains(fn (int $id) => $this->hasPermissionForOrgUnit($user, $permission, $id));
+    }
 
-            $parentMatch = $this->getActiveAssignments($user)
-                ->filter(fn ($a) => $a->scope_type === 'org_unit' && (int) $a->scoped_org_unit_id === $parentId)
-                ->contains(fn ($a) => $this->assignmentGrantsPermission($a, $permission));
+    /**
+     * Resolve a permission at one assignment's scope.
+     *
+     * Used when the applicable scope was already determined from another
+     * record (for example a resource's origin assignment), and the question
+     * is whether THIS user's own authority covers that exact scope.
+     */
+    public function hasPermissionAtAssignmentScope(User $user, string $permission, string $scopeType, ?int $scopeId): bool
+    {
+        return match ($scopeType) {
+            'global' => $this->hasGlobalPermission($user, $permission),
+            'org_unit' => $scopeId !== null && $this->hasPermissionForOrgUnit($user, $permission, $scopeId),
+            'campaign' => ($campaign = $scopeId ? Campaign::find($scopeId) : null) !== null
+                && $this->hasPermissionForCampaign($user, $permission, $campaign),
+            'site' => ($site = $scopeId ? MissionSite::find($scopeId) : null) !== null
+                && $this->hasPermissionForSite($user, $permission, $site, false),
+            'team' => ($team = $scopeId ? Team::find($scopeId) : null) !== null
+                && $this->hasPermissionForTeam($user, $permission, $team),
+            default => false,
+        };
+    }
 
-            if ($parentMatch) {
-                return true;
-            }
-
-            $current = OrgUnit::find($parentId);
-        }
-
-        return false;
+    /**
+     * Return the active assignments whose effective permission set explicitly
+     * grants the given permission (overrides honoured).
+     *
+     * Callers use this to walk contributor origin scopes one assignment at a
+     * time, pairing it with hasPermissionAtAssignmentScope().
+     */
+    public function getActiveAssignmentsGranting(User $user, string $permission): Collection
+    {
+        return $this->getActiveAssignments($user)
+            ->filter(fn (UserRoleAssignment $assignment) => $this->permissionEffect($assignment, $permission) === 'grant')
+            ->values();
     }
 
     /**
@@ -142,7 +176,7 @@ class AuthorizationService
     public function canViewCampaign(User $user, Campaign $campaign): bool
     {
         return $this->resolveEffectiveAssignments($user, $campaign)
-                    ->isNotEmpty();
+            ->isNotEmpty();
     }
 
     /**
@@ -151,7 +185,7 @@ class AuthorizationService
     public function canViewSite(User $user, MissionSite $site): bool
     {
         return $this->resolveEffectiveAssignments($user, $site->campaign, $site)
-                    ->isNotEmpty();
+            ->isNotEmpty();
     }
 
     /**
@@ -160,7 +194,7 @@ class AuthorizationService
     public function canViewTeam(User $user, Team $team): bool
     {
         return $this->resolveEffectiveAssignments($user, $team->campaign, $team->site, $team)
-                    ->isNotEmpty();
+            ->isNotEmpty();
     }
 
     // ── Effective capability reporting (UI affordances only) ──────────────────
@@ -195,7 +229,13 @@ class AuthorizationService
      * without flattening scoped permissions into global ones.
      *
      * Each entry describes a single active assignment:
-     *   scope_type, the relevant scope id(s), the role code, and expiry.
+     *   scope_type, the relevant scope id(s), the role code, expiry, and the
+     *   permission codes this SPECIFIC assignment carries (overrides applied).
+     *
+     * The per-assignment `permissions` list exists so the client can ask a
+     * scope-aware question ("may I do X *in this site*?") without flattening
+     * the union. It remains a UI affordance: the backend re-authorises every
+     * request against the real resource scope.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -203,18 +243,34 @@ class AuthorizationService
     {
         return $this->getActiveAssignments($user)
             ->map(fn (UserRoleAssignment $a) => [
-                'role'         => $a->role?->code,
-                'role_label'   => $a->role?->label,
-                'scope_type'   => $a->scope_type,
-                'org_unit_id'  => $a->scoped_org_unit_id,
-                'campaign_id'  => $a->scoped_campaign_id,
-                'site_id'      => $a->scoped_site_id,
-                'team_id'      => $a->scoped_team_id,
-                'valid_from'   => $a->valid_from?->toDateString(),
-                'valid_until'  => $a->valid_until?->toDateString(),
+                'role' => $a->role?->code,
+                'role_label' => $a->role?->label,
+                'scope_type' => $a->scope_type,
+                'org_unit_id' => $a->scoped_org_unit_id,
+                'campaign_id' => $a->scoped_campaign_id,
+                'site_id' => $a->scoped_site_id,
+                'team_id' => $a->scoped_team_id,
+                'valid_from' => $a->valid_from?->toDateString(),
+                'valid_until' => $a->valid_until?->toDateString(),
+                'permissions' => $this->assignmentPermissionCodes($a),
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * The user's active role assignments, exactly as the authorization engine
+     * resolves them (status, role is_active, validity window, revocation).
+     *
+     * Exposed read-only so callers that must reason about authority — such as
+     * workspace resolution — use the SAME set of assignments every permission
+     * decision uses. It grants nothing by itself.
+     *
+     * @return Collection<int, UserRoleAssignment>
+     */
+    public function activeAssignmentsFor(User $user): Collection
+    {
+        return $this->getActiveAssignments($user);
     }
 
     // ── List scoping (campaign/site granularity) ──────────────────────────────
@@ -265,30 +321,30 @@ class AuthorizationService
      * such as the mission-site listing. An explicit permission code is
      * preferred everywhere else, so that listings stay capability-driven.
      *
+     * Deny overrides narrow the result: an exact denial removes its pair, and
+     * a site-level denial carves that site out of any broader pair (recorded
+     * as except_site_ids, honoured by scopeQuery()).
+     *
      * @param  string|array<int, string>|null  $permissions
      * @param  bool  $includeTeamScopedAssignments  When false, team-scoped
-     *         assignments contribute NOTHING — they are not expanded into the
-     *         site they sit in. Use this for listings where a team must see
-     *         only its own record and never the wider site (e.g. the reports
-     *         listing, which narrows teams separately via teamIdsWithPermission()).
-     * @return array<int, array{campaign_id: int|null, site_id: int|null}>
+     *                                              assignments contribute NOTHING — they are not expanded into the
+     *                                              site they sit in. Use this for listings where a team must see
+     *                                              only its own record and never the wider site (e.g. the reports
+     *                                              listing, which narrows teams separately via teamIdsWithPermission()).
+     * @return array<int, array{campaign_id: int|null, site_id: int|null, except_site_ids?: array<int, int>}>
      */
     public function getAuthorisedScopes(
         User $user,
         string|array|null $permissions = null,
         bool $includeTeamScopedAssignments = true
     ): array {
-        $codes  = $permissions === null ? null : (array) $permissions;
+        $codes = $permissions === null ? null : (array) $permissions;
         $scopes = [];
 
-        foreach ($this->getActiveAssignments($user) as $assignment) {
-            if ($codes !== null && ! $this->assignmentGrantsPermission($assignment, $codes)) {
-                continue;
-            }
-
+        $expand = function (UserRoleAssignment $assignment, bool $includeTeamScopedAssignments, array &$out): void {
             switch ($assignment->scope_type) {
                 case 'global':
-                    $scopes[] = ['campaign_id' => null, 'site_id' => null];
+                    $out[] = ['campaign_id' => null, 'site_id' => null];
                     break;
 
                 case 'org_unit':
@@ -296,13 +352,13 @@ class AuthorizationService
                         break;
                     }
                     foreach ($this->campaignIdsForOrgUnit((int) $assignment->scoped_org_unit_id) as $campaignId) {
-                        $scopes[] = ['campaign_id' => $campaignId, 'site_id' => null];
+                        $out[] = ['campaign_id' => $campaignId, 'site_id' => null];
                     }
                     break;
 
                 case 'campaign':
                     if ($assignment->scoped_campaign_id !== null) {
-                        $scopes[] = ['campaign_id' => (int) $assignment->scoped_campaign_id, 'site_id' => null];
+                        $out[] = ['campaign_id' => (int) $assignment->scoped_campaign_id, 'site_id' => null];
                     }
                     break;
 
@@ -311,7 +367,7 @@ class AuthorizationService
                         ? MissionSite::find($assignment->scoped_site_id)
                         : null;
                     if ($site) {
-                        $scopes[] = ['campaign_id' => (int) $site->campaign_id, 'site_id' => (int) $site->id];
+                        $out[] = ['campaign_id' => (int) $site->campaign_id, 'site_id' => (int) $site->id];
                     }
                     break;
 
@@ -323,16 +379,84 @@ class AuthorizationService
                         ? Team::find($assignment->scoped_team_id)
                         : null;
                     if ($team && $team->mission_site_id !== null) {
-                        $scopes[] = ['campaign_id' => (int) $team->campaign_id, 'site_id' => (int) $team->mission_site_id];
+                        $out[] = ['campaign_id' => (int) $team->campaign_id, 'site_id' => (int) $team->mission_site_id];
                     }
                     break;
             }
+        };
+
+        if ($codes === null) {
+            foreach ($this->getActiveAssignments($user) as $assignment) {
+                $expand($assignment, $includeTeamScopedAssignments, $scopes);
+            }
+        } else {
+            // Resolve per permission code so a denial for one code never
+            // narrows scopes that were granted for a different code in the
+            // same request.
+            $result = [];
+            foreach ($codes as $code) {
+                $codeScopes = [];
+                $denials = [];
+
+                foreach ($this->getActiveAssignments($user) as $assignment) {
+                    $effect = $this->permissionEffect($assignment, $code);
+                    if ($effect === 'grant') {
+                        $expand($assignment, $includeTeamScopedAssignments, $codeScopes);
+                    } elseif ($effect === 'deny') {
+                        $denials[] = $assignment;
+                    }
+                }
+
+                if ($denials !== []) {
+                    $codeScopes = array_values(array_filter(
+                        $codeScopes,
+                        fn (array $scope) => ! collect($denials)
+                            ->contains(fn (UserRoleAssignment $denial) => $this->scopeCoveredByDenial($scope, $denial))
+                    ));
+
+                    // A site-level deny carves individual sites out of the
+                    // broader (campaign or organisational) pairs instead of
+                    // matching a pair exactly.
+                    foreach ($codeScopes as $index => $scope) {
+                        if ($scope['site_id'] !== null) {
+                            continue;
+                        }
+
+                        $except = $scope['except_site_ids'] ?? [];
+                        foreach ($denials as $denial) {
+                            $deniedSiteId = $this->deniedSiteId($denial);
+                            if ($deniedSiteId !== null
+                                && ($deniedSite = MissionSite::find($deniedSiteId)) !== null
+                                && (int) $deniedSite->campaign_id === (int) $scope['campaign_id']) {
+                                $except[] = $deniedSiteId;
+                            }
+                        }
+
+                        if ($except !== []) {
+                            $codeScopes[$index]['except_site_ids'] = array_values(array_unique($except));
+                        }
+                    }
+                }
+
+                $result = array_merge($result, $codeScopes);
+            }
+            $scopes = $result;
         }
 
-        // De-duplicate identical (campaign, site) pairs.
+        // De-duplicate identical (campaign, site) pairs, merging their
+        // excepted sites.
         $unique = [];
         foreach ($scopes as $scope) {
-            $unique[$scope['campaign_id'] . ':' . $scope['site_id']] = $scope;
+            $key = $scope['campaign_id'].':'.$scope['site_id'];
+            if (isset($unique[$key])) {
+                $unique[$key]['except_site_ids'] = array_values(array_unique(array_merge(
+                    $unique[$key]['except_site_ids'] ?? [],
+                    $scope['except_site_ids'] ?? []
+                )));
+
+                continue;
+            }
+            $unique[$key] = $scope;
         }
 
         return array_values($unique);
@@ -407,6 +531,237 @@ class AuthorizationService
     }
 
     /**
+     * The concrete site id a site- or team-scoped deny override applies to,
+     * or null when the denial is not site-specific.
+     */
+    private function deniedSiteId(UserRoleAssignment $denial): ?int
+    {
+        $siteId = match ($denial->scope_type) {
+            'site' => $denial->scoped_site_id,
+            'team' => ($team = Team::find((int) $denial->scoped_team_id))?->mission_site_id,
+            default => null,
+        };
+
+        return $siteId !== null ? (int) $siteId : null;
+    }
+
+    /**
+     * Whether a granted scope pair falls inside the area an explicit deny
+     * override covers. Used to narrow getAuthorisedScopes() results.
+     *
+     * @param  array{campaign_id: int|null, site_id: int|null}  $scope
+     */
+    private function scopeCoveredByDenial(array $scope, UserRoleAssignment $denial): bool
+    {
+        return match ($denial->scope_type) {
+            'global' => true,
+            'org_unit' => $denial->scoped_org_unit_id !== null
+                && $scope['campaign_id'] !== null
+                && ($deniedCampaign = Campaign::find((int) $scope['campaign_id'])) !== null
+                && $this->orgUnitCoversOrgUnit((int) $denial->scoped_org_unit_id, (int) $deniedCampaign->lead_org_unit_id),
+            'campaign' => (int) $scope['campaign_id'] === (int) $denial->scoped_campaign_id,
+            'site' => $scope['site_id'] !== null && (int) $scope['site_id'] === (int) $denial->scoped_site_id,
+            'team' => ($deniedTeam = Team::find((int) $denial->scoped_team_id)) !== null
+                && $scope['site_id'] !== null
+                && (int) $scope['site_id'] === (int) $deniedTeam->mission_site_id
+                && (int) $scope['campaign_id'] === (int) $deniedTeam->campaign_id,
+            default => false,
+        };
+    }
+
+    /**
+     * Resolve the concrete target scope of an assignment (model) or of a
+     * validated role-assignment payload.
+     *
+     * @return array{0: string, 1: int|null}
+     */
+    public function assignmentScope(UserRoleAssignment|array $source): array
+    {
+        if ($source instanceof UserRoleAssignment) {
+            $scopeType = (string) $source->scope_type;
+            $scopeId = match ($scopeType) {
+                'org_unit' => $source->scoped_org_unit_id,
+                'campaign' => $source->scoped_campaign_id,
+                'site' => $source->scoped_site_id,
+                'team' => $source->scoped_team_id,
+                default => null,
+            };
+        } else {
+            $scopeType = (string) ($source['scope_type'] ?? '');
+            $scopeId = match ($scopeType) {
+                'org_unit' => $source['scoped_org_unit_id'] ?? null,
+                'campaign' => $source['scoped_campaign_id'] ?? null,
+                'site' => $source['scoped_site_id'] ?? null,
+                'team' => $source['scoped_team_id'] ?? null,
+                default => null,
+            };
+        }
+
+        return [$scopeType, $scopeId !== null ? (int) $scopeId : null];
+    }
+
+    /**
+     * Whether a configured, active permission delegation authorises granting
+     * $permissionCode at the given target scope.
+     *
+     * A delegation recorded at the target scope itself OR at any scope that
+     * covers it (parent site/campaign, ancestor org unit, global) qualifies.
+     */
+    public function hasPermissionDelegation(string $permissionCode, string $targetType, ?int $targetId): bool
+    {
+        $permissionId = Permission::where('code', $permissionCode)->value('id');
+        if (! $permissionId) {
+            return false;
+        }
+
+        foreach ($this->delegationScopesFor($targetType, $targetId) as [$scopeType, $scopeId, $column]) {
+            $query = DB::table('permission_delegations')
+                ->where('permission_id', $permissionId)
+                ->where('scope_type', $scopeType)
+                ->where('is_active', true);
+
+            if ($column !== null) {
+                $query->where($column, $scopeId);
+            }
+
+            if ($query->exists()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Scope candidates that may legitimately carry a delegation covering the
+     * given target: the target itself first, then every scope covering it.
+     *
+     * @return array<int, array{0: string, 1: int|null, 2: string|null}>
+     */
+    private function delegationScopesFor(string $targetType, ?int $targetId): array
+    {
+        $columns = [
+            'org_unit' => 'scoped_org_unit_id',
+            'campaign' => 'scoped_campaign_id',
+            'site' => 'scoped_site_id',
+            'team' => 'scoped_team_id',
+        ];
+
+        $candidates = [];
+        $orgCandidates = function (int $orgUnitId) use ($columns, &$candidates): void {
+            // A delegation scoped to the unit or to any of its ancestors covers it.
+            $current = OrgUnit::find($orgUnitId);
+            while ($current) {
+                $candidates[] = ['org_unit', (int) $current->id, $columns['org_unit']];
+                $current = $current->parent_id !== null ? OrgUnit::find((int) $current->parent_id) : null;
+            }
+        };
+
+        switch ($targetType) {
+            case 'global':
+                break;
+
+            case 'org_unit':
+                if ($targetId === null) {
+                    return [];
+                }
+                $orgCandidates($targetId);
+                break;
+
+            case 'campaign':
+                $campaign = $targetId !== null ? Campaign::find($targetId) : null;
+                if (! $campaign) {
+                    return [];
+                }
+                $candidates[] = ['campaign', (int) $campaign->id, $columns['campaign']];
+                if ($campaign->lead_org_unit_id !== null) {
+                    $orgCandidates((int) $campaign->lead_org_unit_id);
+                }
+                break;
+
+            case 'site':
+                $site = $targetId !== null ? MissionSite::find($targetId) : null;
+                if (! $site) {
+                    return [];
+                }
+                $candidates[] = ['site', (int) $site->id, $columns['site']];
+                $campaign = Campaign::find((int) $site->campaign_id);
+                if ($campaign) {
+                    $candidates[] = ['campaign', (int) $campaign->id, $columns['campaign']];
+                    if ($campaign->lead_org_unit_id !== null) {
+                        $orgCandidates((int) $campaign->lead_org_unit_id);
+                    }
+                }
+                break;
+
+            case 'team':
+                $team = $targetId !== null ? Team::find($targetId) : null;
+                if (! $team) {
+                    return [];
+                }
+                $candidates[] = ['team', (int) $team->id, $columns['team']];
+                if ($team->mission_site_id !== null) {
+                    $candidates[] = ['site', (int) $team->mission_site_id, $columns['site']];
+                }
+                $campaign = Campaign::find((int) $team->campaign_id);
+                if ($campaign) {
+                    $candidates[] = ['campaign', (int) $campaign->id, $columns['campaign']];
+                    if ($campaign->lead_org_unit_id !== null) {
+                        $orgCandidates((int) $campaign->lead_org_unit_id);
+                    }
+                }
+                break;
+
+            default:
+                return [];
+        }
+
+        $candidates[] = ['global', null, null];
+
+        return $candidates;
+    }
+
+    // ── Resource distribution review ──────────────────────────────────────────
+
+    /**
+     * Resolve a permission at one distribution request's audience target scope.
+     */
+    private function hasPermissionForDistributionTarget(
+        User $user,
+        string $permission,
+        string $type,
+        ?int $orgUnitId,
+        ?int $campaignId,
+        ?int $siteId,
+        ?int $teamId
+    ): bool {
+        if ($type === 'campaign' && $campaignId !== null) {
+            $campaign = Campaign::find($campaignId);
+
+            return $campaign !== null && $this->hasPermissionForCampaign($user, $permission, $campaign);
+        }
+
+        if ($type === 'site' && $siteId !== null) {
+            $site = MissionSite::find($siteId);
+
+            return $site !== null && $this->hasPermissionForSite($user, $permission, $site);
+        }
+
+        if ($type === 'team' && $teamId !== null) {
+            $team = Team::find($teamId);
+
+            return $team !== null && $this->hasPermissionForTeam($user, $permission, $team);
+        }
+
+        if (in_array($type, ['union', 'conference', 'mission_field', 'zone', 'church_district', 'local_church'], true)
+            && $orgUnitId !== null) {
+            return $this->hasPermissionForOrgUnit($user, $permission, $orgUnitId);
+        }
+
+        return false;
+    }
+
+    /**
      * Constrain an Eloquent query to a set of authorised scope pairs produced
      * by getAuthorisedScopes().
      *
@@ -417,11 +772,7 @@ class AuthorizationService
      * An empty scope list produces an unsatisfiable query (no access) rather
      * than an unconstrained one (full access) — failing closed.
      *
-     * @param  Builder  $query
      * @param  array<int, array{campaign_id: int|null, site_id: int|null}>  $scopes
-     * @param  string  $campaignColumn
-     * @param  string|null  $siteColumn
-     * @return Builder
      */
     public function scopeQuery(
         Builder $query,
@@ -446,8 +797,14 @@ class AuthorizationService
                     if ($scope['campaign_id'] !== null) {
                         $inner->where($campaignColumn, $scope['campaign_id']);
                     }
-                    if ($scope['site_id'] !== null && $siteColumn !== null) {
-                        $inner->where($siteColumn, $scope['site_id']);
+                    if ($scope['site_id'] !== null) {
+                        if ($siteColumn !== null) {
+                            $inner->where($siteColumn, $scope['site_id']);
+                        }
+                    } elseif ($siteColumn !== null && ! empty($scope['except_site_ids'])) {
+                        // The pair is campaign-broad but carries a carve-out of
+                        // sites explicitly denied for this permission.
+                        $inner->whereNotIn($siteColumn, $scope['except_site_ids']);
                     }
                 });
             }
@@ -481,14 +838,14 @@ class AuthorizationService
 
         return $assignments->filter(function (UserRoleAssignment $a) use ($campaign, $site, $team, $includeTeamScopedAssignments) {
             return match ($a->scope_type) {
-                'global'   => true,
+                'global' => true,
                 'org_unit' => $this->orgUnitCoversOrgUnit(
-                                  $a->scoped_org_unit_id,
-                                  $campaign->lead_org_unit_id
-                              ),
+                    $a->scoped_org_unit_id,
+                    $campaign->lead_org_unit_id
+                ),
                 'campaign' => (int) $a->scoped_campaign_id === (int) $campaign->id
                               && ($site === null || (int) $campaign->id === (int) $site->campaign_id),
-                'site'     => $site !== null
+                'site' => $site !== null
                               && (int) $a->scoped_site_id === (int) $site->id,
                 // A team-scoped role covers exactly the team it was granted for.
                 // It also covers the SITE that team belongs to (so a team member
@@ -498,11 +855,11 @@ class AuthorizationService
                 // team was requested, which prevents sibling-team leakage.
                 // $includeTeamScopedAssignments = false removes the site arm
                 // entirely so that a team never inherits the site's authority.
-                'team'     => $includeTeamScopedAssignments && $a->scoped_team_id !== null && (
-                                  ($team !== null && (int) $a->scoped_team_id === (int) $team->id)
-                                  || ($team === null && $site !== null && Team::where('id', $a->scoped_team_id)->where('mission_site_id', $site->id)->exists())
-                              ),
-                default    => false,
+                'team' => $includeTeamScopedAssignments && $a->scoped_team_id !== null && (
+                    ($team !== null && (int) $a->scoped_team_id === (int) $team->id)
+                    || ($team === null && $site !== null && Team::where('id', $a->scoped_team_id)->where('mission_site_id', $site->id)->exists())
+                ),
+                default => false,
             };
         });
     }
@@ -515,53 +872,147 @@ class AuthorizationService
         if (! isset($this->assignmentCache[$user->id])) {
             $today = now()->toDateString();
 
-            $this->assignmentCache[$user->id] = UserRoleAssignment::with(['role.permissions'])
+            $this->assignmentCache[$user->id] = UserRoleAssignment::with(['role', 'permissionVersion.permissions', 'permissionOverrides.permission'])
                 ->where('user_id', $user->id)
+                ->where('status', 'active')
                 ->where(fn ($q) => $q->whereNull('valid_from')->orWhere('valid_from', '<=', $today))
                 ->where(fn ($q) => $q->whereNull('valid_until')->orWhere('valid_until', '>=', $today))
+                ->whereHas('role', fn ($q) => $q->where('is_active', true))
                 ->get();
+
+            // Assignments created without an explicit permission version fall
+            // back to the role's latest published version so their effective
+            // permissions still resolve instead of silently denying everything.
+            foreach ($this->assignmentCache[$user->id] as $assignment) {
+                if (! $assignment->permissionVersion) {
+                    $fallback = RolePermissionVersion::where('system_role_id', $assignment->system_role_id)
+                        ->whereNotNull('published_at')
+                        ->orderByDesc('version')
+                        ->with('permissions')
+                        ->first();
+                    $assignment->setRelation('permissionVersion', $fallback);
+                }
+            }
         }
 
         return $this->assignmentCache[$user->id];
     }
 
     /**
-     * Check whether an assignment's role grants any of the given permissions.
+     * Clear the cached permission assignments for a user.
+     * Called by model observers when assignments change.
+     */
+    public function clearUserCache(?User $user): void
+    {
+        if ($user) {
+            unset($this->assignmentCache[$user->id]);
+        }
+    }
+
+    /**
+     * The effective effect of one assignment for a permission.
+     *
+     * An explicit override wins; otherwise the assignment's pinned, immutable
+     * permission version decides. Null means the permission is simply absent
+     * from that assignment (neither granted nor denied).
+     *
+     * @return 'grant'|'deny'|null
+     */
+    private function permissionEffect(UserRoleAssignment $assignment, string $permission): ?string
+    {
+        $override = $assignment->permissionOverrides->first(fn ($item) => $item->permission?->code === $permission);
+        if ($override) {
+            return $override->effect;
+        }
+
+        if (! $assignment->permissionVersion
+            || ! $assignment->permissionVersion->permissions->contains(fn ($item) => $item->code === $permission)) {
+            return null;
+        }
+
+        return 'grant';
+    }
+
+    /**
+     * Decide a permission across a set of applicable assignments.
+     *
+     * A denial in ANY applicable assignment wins over grants elsewhere in the
+     * same set; otherwise a grant in any of the set's assignments decides
+     * true.
+     */
+    private function effectivePermissionDecision(Collection $assignments, string|array $permissions): bool
+    {
+        foreach ((array) $permissions as $permission) {
+            $effects = $assignments->map(fn (UserRoleAssignment $assignment) => $this->permissionEffect($assignment, $permission));
+
+            if ($effects->contains('deny')) {
+                continue;
+            }
+
+            if ($effects->contains('grant')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether ONE single assignment effectively grants any of the permissions
+     * (overrides honoured). For decisions across several assignments use
+     * effectivePermissionDecision() so denials are honoured.
      *
      * @param  string|array<int, string>  $permissions
      */
     private function assignmentGrantsPermission(UserRoleAssignment $assignment, string|array $permissions): bool
     {
-        if (! $assignment->relationLoaded('role') || ! $assignment->role) {
-            return false;
+        foreach ((array) $permissions as $permission) {
+            if ($this->permissionEffect($assignment, $permission) === 'grant') {
+                return true;
+            }
         }
 
-        if (! $assignment->role->relationLoaded('permissions')) {
-            return false;
-        }
-
-        $codes = (array) $permissions;
-
-        return $assignment->role->permissions->contains(fn ($p) => in_array($p->code, $codes, true));
+        return false;
     }
 
     /**
-     * Return the permission codes granted by a single assignment's role.
-     * Returns an empty list when the role or its permissions are not loaded.
+     * Return the permission codes a single assignment effectively carries:
+     * its pinned permission version's codes, minus override denials, plus
+     * override grants.
+     *
+     * Returns an empty list when the assignment resolves to no permission
+     * version.
      *
      * @return array<int, string>
      */
     private function assignmentPermissionCodes(UserRoleAssignment $assignment): array
     {
-        if (! $assignment->relationLoaded('role') || ! $assignment->role) {
+        if (! $assignment->relationLoaded('permissionVersion')
+            || ! $assignment->permissionVersion
+            || ! $assignment->permissionVersion->relationLoaded('permissions')) {
             return [];
         }
 
-        if (! $assignment->role->relationLoaded('permissions')) {
-            return [];
+        $codes = $assignment->permissionVersion->permissions->pluck('code')->values()->all();
+
+        if ($assignment->relationLoaded('permissionOverrides') && $assignment->permissionOverrides->isNotEmpty()) {
+            $denied = [];
+            foreach ($assignment->permissionOverrides as $override) {
+                if ($override->effect === 'deny' && $override->permission) {
+                    $denied[] = $override->permission->code;
+                }
+            }
+            $codes = array_values(array_filter($codes, fn (string $code) => ! in_array($code, $denied, true)));
+
+            foreach ($assignment->permissionOverrides as $override) {
+                if ($override->effect === 'grant' && $override->permission) {
+                    $codes[] = $override->permission->code;
+                }
+            }
+            $codes = array_values(array_unique($codes));
         }
 
-        return $assignment->role->permissions->pluck('code')->all();
+        return $codes;
     }
 
     /**
@@ -605,7 +1056,7 @@ class AuthorizationService
      */
     private function orgUnitSubtreeIds(int $rootId): array
     {
-        $ids      = [$rootId];
+        $ids = [$rootId];
         $frontier = [$rootId];
 
         while ($frontier !== []) {
@@ -620,7 +1071,7 @@ class AuthorizationService
                 break;
             }
 
-            $ids      = array_merge($ids, $children);
+            $ids = array_merge($ids, $children);
             $frontier = $children;
         }
 

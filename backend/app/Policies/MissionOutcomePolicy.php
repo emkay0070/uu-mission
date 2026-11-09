@@ -70,22 +70,43 @@ class MissionOutcomePolicy
     /**
      * Assigning a follow-up requires outcomes.manage_followup.
      * Missionaries only have outcomes.record — they cannot reassign follow-ups.
+     *
+     * Like view(), this is resolved against BOTH the outcome's campaign and the
+     * outcome's actual site: a campaign-scoped manager may assign anywhere in
+     * the campaign, while a site-scoped coordinator may assign only for an
+     * outcome recorded at their OWN site. This deliberately does not widen a
+     * site grant into campaign-wide authority, and never lets one site's
+     * coordinator touch a sibling site's outcome.
      */
     public function assignFollowUp(User $user, MissionOutcome $outcome): bool
     {
-        return $this->auth->hasPermissionForCampaign(
-            $user,
-            'outcomes.manage_followup',
-            $outcome->campaign
-        );
+        return $this->canManageFollowUp($user, $outcome);
     }
 
+    /**
+     * Completing a follow-up uses the same campaign-or-actual-site rule as
+     * assignment, so a coordinator who could assign an outcome's follow-up can
+     * also close it, and neither scope can reach outside its boundary.
+     */
     public function completeFollowUp(User $user, MissionOutcome $outcome): bool
     {
-        return $this->auth->hasPermissionForCampaign(
-            $user,
-            'outcomes.manage_followup',
-            $outcome->campaign
-        );
+        return $this->canManageFollowUp($user, $outcome);
+    }
+
+    /**
+     * Shared follow-up authorization: campaign-wide authority first, then the
+     * outcome's real site. The site branch is what closes the audit's P0 gap
+     * for site coordinators; the campaign branch preserves existing behaviour.
+     */
+    private function canManageFollowUp(User $user, MissionOutcome $outcome): bool
+    {
+        $campaign = $outcome->campaign;
+        $site     = $outcome->site;
+
+        if ($this->auth->hasPermissionForCampaign($user, 'outcomes.manage_followup', $campaign)) {
+            return true;
+        }
+
+        return $site && $this->auth->hasPermissionForSite($user, 'outcomes.manage_followup', $site);
     }
 }

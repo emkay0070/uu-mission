@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
+use Tests\Traits\PublishesRolePermissions;
 
 /**
  * WorkspaceAccessControlTest — permission-driven missionary workspace.
@@ -41,18 +42,29 @@ use Tests\TestCase;
  */
 class WorkspaceAccessControlTest extends TestCase
 {
+    use PublishesRolePermissions;
     use RefreshDatabase;
 
     private OrgUnit $uu;
+
     private OrgUnit $cuc;
+
     private Campaign $campaignA;
+
     private Campaign $campaignB;
+
     private MissionSite $siteA1;
+
     private MissionSite $siteA2;
+
     private MissionSite $siteB1;
+
     private Team $teamA1;
+
     private SystemRole $roleMissionary;
+
     private SystemRole $roleSiteCoordinator;
+
     private SystemRole $roleDirector;
 
     protected function setUp(): void
@@ -93,8 +105,8 @@ class WorkspaceAccessControlTest extends TestCase
 
     public function test_site_scoped_user_cannot_access_another_site(): void
     {
-        $user          = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
-        $ownRegister   = $this->createRegister($this->campaignA, $this->siteA1);
+        $user = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
+        $ownRegister = $this->createRegister($this->campaignA, $this->siteA1);
         $otherRegister = $this->createRegister($this->campaignA, $this->siteA2);
 
         // The list is constrained to the user's site only.
@@ -124,12 +136,12 @@ class WorkspaceAccessControlTest extends TestCase
 
         $visible = Person::factory()->create([
             'first_name' => 'Visible',
-            'last_name'  => 'Person',
+            'last_name' => 'Person',
             'registered_by_user_id' => $user->id,
         ]);
         $hidden = Person::factory()->create([
             'first_name' => 'Hidden',
-            'last_name'  => 'Person',
+            'last_name' => 'Person',
             'registered_by_user_id' => null,
         ]);
 
@@ -178,12 +190,12 @@ class WorkspaceAccessControlTest extends TestCase
         $user = $this->createUserWithoutOperationalAccess();
 
         UserRoleAssignment::create([
-            'user_id'        => $user->id,
+            'user_id' => $user->id,
             'system_role_id' => $this->roleSiteCoordinator->id,
-            'scope_type'     => 'site',
+            'scope_type' => 'site',
             'scoped_site_id' => $this->siteA1->id,
-            'valid_from'     => now()->subYear()->toDateString(),
-            'valid_until'    => now()->subDay()->toDateString(),
+            'valid_from' => now()->subYear()->toDateString(),
+            'valid_until' => now()->subDay()->toDateString(),
         ]);
 
         $this->actingAs($user, 'sanctum')->getJson('/api/v1/people')->assertStatus(403);
@@ -228,15 +240,15 @@ class WorkspaceAccessControlTest extends TestCase
 
     public function test_completed_deployment_is_retained_but_not_current(): void
     {
-        $user   = $this->createUserWithSiteRole($this->roleMissionary, $this->siteA1);
+        $user = $this->createUserWithSiteRole($this->roleMissionary, $this->siteA1);
         $person = $user->person;
 
         $deployment = CampaignAssignment::create([
-            'campaign_id'         => $this->campaignA->id,
-            'person_id'           => $person->id,
-            'mission_site_id'     => $this->siteA1->id,
-            'assigned_team_id'    => $this->teamA1->id,
-            'status'              => 'completed',
+            'campaign_id' => $this->campaignA->id,
+            'person_id' => $person->id,
+            'mission_site_id' => $this->siteA1->id,
+            'assigned_team_id' => $this->teamA1->id,
+            'status' => 'completed',
             'assigned_by_user_id' => $user->id,
         ]);
 
@@ -272,14 +284,14 @@ class WorkspaceAccessControlTest extends TestCase
 
     public function test_duplicate_check_only_returns_people_within_scope(): void
     {
-        $user  = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
+        $user = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
         $other = $this->createUserWithoutOperationalAccess();
 
         // Registered by the caller → visible.
         $inScope = Person::factory()->create([
             'first_name' => 'Amos',
-            'last_name'  => 'Zulu',
-            'phone'      => '0700111222',
+            'last_name' => 'Zulu',
+            'phone' => '0700111222',
             'registered_by_user_id' => $user->id,
         ]);
 
@@ -287,8 +299,8 @@ class WorkspaceAccessControlTest extends TestCase
         // → must never be disclosed.
         $outOfScope = Person::factory()->create([
             'first_name' => 'Amos',
-            'last_name'  => 'Yankee',
-            'phone'      => '0700333444',
+            'last_name' => 'Yankee',
+            'phone' => '0700333444',
             'registered_by_user_id' => $other->id,
         ]);
 
@@ -356,15 +368,15 @@ class WorkspaceAccessControlTest extends TestCase
 
     public function test_campaign_deployment_access_continues_to_work(): void
     {
-        $user   = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
+        $user = $this->createUserWithSiteRole($this->roleSiteCoordinator, $this->siteA1);
         $person = $user->person;
 
         CampaignAssignment::create([
-            'campaign_id'         => $this->campaignA->id,
-            'person_id'           => $person->id,
-            'mission_site_id'     => $this->siteA1->id,
-            'assigned_team_id'    => $this->teamA1->id,
-            'status'              => 'confirmed',
+            'campaign_id' => $this->campaignA->id,
+            'person_id' => $person->id,
+            'mission_site_id' => $this->siteA1->id,
+            'assigned_team_id' => $this->teamA1->id,
+            'status' => 'confirmed',
             'assigned_by_user_id' => $user->id,
         ]);
 
@@ -389,35 +401,35 @@ class WorkspaceAccessControlTest extends TestCase
     private function buildFixtures(): void
     {
         $typeUnion = OrgUnitType::factory()->create(['code' => 'union', 'label' => 'Union']);
-        $typeConf  = OrgUnitType::factory()->create(['code' => 'conference', 'label' => 'Conference']);
+        $typeConf = OrgUnitType::factory()->create(['code' => 'conference', 'label' => 'Conference']);
 
         $this->uu = OrgUnit::factory()->create([
             'org_unit_type_id' => $typeUnion->id,
-            'name'             => 'Uganda Union',
+            'name' => 'Uganda Union',
         ]);
         $this->cuc = OrgUnit::factory()->create([
             'org_unit_type_id' => $typeConf->id,
-            'parent_id'        => $this->uu->id,
-            'name'             => 'Central Uganda Conference',
+            'parent_id' => $this->uu->id,
+            'name' => 'Central Uganda Conference',
         ]);
 
-        $pt        = ProgrammeType::factory()->create(['code' => 'global_mission', 'label' => 'Global Mission']);
+        $pt = ProgrammeType::factory()->create(['code' => 'global_mission', 'label' => 'Global Mission']);
         $programme = Programme::factory()->create([
             'programme_type_id' => $pt->id,
             'owning_org_unit_id' => $this->uu->id,
         ]);
 
         $this->campaignA = Campaign::factory()->create([
-            'programme_id'     => $programme->id,
+            'programme_id' => $programme->id,
             'lead_org_unit_id' => $this->cuc->id,
-            'name'             => 'Campaign Alpha',
-            'status'           => 'active',
+            'name' => 'Campaign Alpha',
+            'status' => 'active',
         ]);
         $this->campaignB = Campaign::factory()->create([
-            'programme_id'     => $programme->id,
+            'programme_id' => $programme->id,
             'lead_org_unit_id' => $this->cuc->id,
-            'name'             => 'Campaign Beta',
-            'status'           => 'active',
+            'name' => 'Campaign Beta',
+            'status' => 'active',
         ]);
 
         $this->siteA1 = MissionSite::factory()->create(['campaign_id' => $this->campaignA->id, 'name' => 'Site A1']);
@@ -425,17 +437,17 @@ class WorkspaceAccessControlTest extends TestCase
         $this->siteB1 = MissionSite::factory()->create(['campaign_id' => $this->campaignB->id, 'name' => 'Site B1']);
 
         $teamType = TeamType::create([
-            'code'      => 'field_team',
-            'label'     => 'Field Team',
+            'code' => 'field_team',
+            'label' => 'Field Team',
             'dimension' => 'operational',
             'is_active' => true,
         ]);
 
         $this->teamA1 = Team::factory()->create([
-            'campaign_id'     => $this->campaignA->id,
+            'campaign_id' => $this->campaignA->id,
             'mission_site_id' => $this->siteA1->id,
-            'team_type_id'    => $teamType->id,
-            'name'            => 'Team A1',
+            'team_type_id' => $teamType->id,
+            'name' => 'Team A1',
         ]);
 
         // The seeded missionary role: outreach/attendance only.
@@ -474,8 +486,8 @@ class WorkspaceAccessControlTest extends TestCase
     private function createRole(string $code, string $scopeType, array $permCodes): SystemRole
     {
         $role = SystemRole::factory()->create([
-            'code'       => $code,
-            'label'      => ucwords(str_replace('_', ' ', $code)),
+            'code' => $code,
+            'label' => ucwords(str_replace('_', ' ', $code)),
             'scope_type' => $scopeType,
         ]);
 
@@ -486,7 +498,7 @@ class WorkspaceAccessControlTest extends TestCase
             )->id;
         })->toArray();
 
-        $role->permissions()->sync($permIds);
+        $this->publishRolePermissions($role, $permIds);
 
         return $role;
     }
@@ -509,9 +521,9 @@ class WorkspaceAccessControlTest extends TestCase
         Person::factory()->create(['user_id' => $user->id]);
 
         UserRoleAssignment::create([
-            'user_id'        => $user->id,
+            'user_id' => $user->id,
             'system_role_id' => $role->id,
-            'scope_type'     => 'site',
+            'scope_type' => 'site',
             'scoped_site_id' => $site->id,
         ]);
 
@@ -524,9 +536,9 @@ class WorkspaceAccessControlTest extends TestCase
         Person::factory()->create(['user_id' => $user->id]);
 
         UserRoleAssignment::create([
-            'user_id'            => $user->id,
-            'system_role_id'     => $role->id,
-            'scope_type'         => 'org_unit',
+            'user_id' => $user->id,
+            'system_role_id' => $role->id,
+            'scope_type' => 'org_unit',
             'scoped_org_unit_id' => $orgUnit->id,
         ]);
 
@@ -536,12 +548,12 @@ class WorkspaceAccessControlTest extends TestCase
     private function createRegister(Campaign $campaign, MissionSite $site): AttendanceRegister
     {
         return AttendanceRegister::create([
-            'campaign_id'     => $campaign->id,
+            'campaign_id' => $campaign->id,
             'mission_site_id' => $site->id,
-            'register_name'   => 'Test Register',
-            'register_date'   => now()->toDateString(),
-            'register_type'   => 'meeting',
-            'status'          => 'open',
+            'register_name' => 'Test Register',
+            'register_date' => now()->toDateString(),
+            'register_type' => 'meeting',
+            'status' => 'open',
         ]);
     }
 }

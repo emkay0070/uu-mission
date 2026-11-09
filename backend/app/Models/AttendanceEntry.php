@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * AttendanceEntry — one attendee at one register occurrence.
@@ -34,26 +35,33 @@ class AttendanceEntry extends Model
         'is_walk_in', 'is_anonymous',
         'visitor_name', 'visitor_phone', 'visitor_gender',
         'is_first_time', 'decision_made', 'notes',
+        'linked_by_user_id', 'linked_at',
     ];
 
     protected function casts(): array
     {
         return [
             'is_first_time' => 'boolean',
-            'is_walk_in'    => 'boolean',
-            'is_anonymous'  => 'boolean',
-            'created_at'    => 'datetime',
+            'is_walk_in' => 'boolean',
+            'is_anonymous' => 'boolean',
+            'created_at' => 'datetime',
+            'linked_at' => 'datetime',
         ];
     }
 
-    public function register(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function register(): BelongsTo
     {
         return $this->belongsTo(AttendanceRegister::class, 'attendance_register_id');
     }
 
-    public function person(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function person(): BelongsTo
     {
         return $this->belongsTo(Person::class);
+    }
+
+    public function linkedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'linked_by_user_id');
     }
 
     /**
@@ -64,4 +72,3 @@ class AttendanceEntry extends Model
         return $this->person_id !== null;
     }
 }
-

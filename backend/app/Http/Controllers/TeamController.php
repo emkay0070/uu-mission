@@ -34,11 +34,27 @@ class TeamController extends Controller
      */
     public function index(Request $request, Campaign $campaign): JsonResponse
     {
-        $this->authorize('viewAny', [Team::class, $campaign]);
+        $request->validate([
+            'site_id' => ['sometimes', 'integer'],
+        ]);
+
+        // Resolve the site BEFORE authorising so a site-scoped coordinator —
+        // who holds no campaign-wide authority — can still list the teams at
+        // their OWN site. Listing without a site stays a campaign-scoped
+        // decision, so the narrower site admission never widens the campaign.
+        $site = $request->filled('site_id')
+            ? $this->resolveSite($campaign, (int) $request->site_id)
+            : null;
+
+        $this->authorize('viewAny', [Team::class, $campaign, $site]);
 
         $query = $campaign->teams()
             ->with(['teamType', 'originOrgUnit', 'site'])
-            ->withCount('members');
+            // Count only CURRENT membership. Removing a member soft-ends the
+            // row (ended_on is set) rather than deleting it, so counting every
+            // row would report departed members as if they were still on the
+            // team.
+            ->withCount(['members' => fn ($q) => $q->whereNull('ended_on')]);
 
         if ($request->filled('site_id')) {
             $query->where('mission_site_id', $request->site_id);
@@ -56,8 +72,6 @@ class TeamController extends Controller
      */
     public function store(Request $request, Campaign $campaign): JsonResponse
     {
-        $this->authorize('create', [Team::class, $campaign]);
-
         $validated = $request->validate([
             'name'               => ['required', 'string', 'max:200'],
             'description'        => ['sometimes', 'nullable', 'string'],
@@ -66,10 +80,16 @@ class TeamController extends Controller
             'origin_org_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:org_units,id'],
         ]);
 
-        // If a site is specified, verify it belongs to this campaign
-        if (isset($validated['mission_site_id']) && $validated['mission_site_id']) {
-            $this->validateSiteScope($campaign, $validated['mission_site_id']);
+        // Resolve the site BEFORE authorising: a site-scoped coordinator holds
+        // assignments.manage only at their own site, so the site is part of the
+        // authorization decision, not merely a data-integrity check on top of
+        // it. A campaign-wide team (no site) still requires campaign authority.
+        $site = null;
+        if (! empty($validated['mission_site_id'])) {
+            $site = $this->resolveSite($campaign, (int) $validated['mission_site_id']);
         }
+
+        $this->authorize('create', [Team::class, $campaign, $site]);
 
         $team = $campaign->teams()->create($validated);
 
@@ -89,11 +109,15 @@ class TeamController extends Controller
         $this->validateTeamScope($campaign, $team);
         $this->authorize('view', $team);
 
+        // The roster is the CURRENT membership. Rows are soft-ended (ended_on)
+        // on removal rather than deleted, so an unfiltered `members` load would
+        // present departed members — and a departed leader — as if they were
+        // still on the team.
         $team->load([
             'teamType',
             'originOrgUnit',
             'site',
-            'members.person',
+            'members' => fn ($q) => $q->whereNull('ended_on')->with('person'),
         ]);
 
         return response()->json($team);
@@ -137,8 +161,10 @@ class TeamController extends Controller
             'joined_on'    => ['sometimes', 'nullable', 'date'],
         ]);
 
-        // Only one leader per team
-        if ($validated['role_in_team'] === 'leader' && $team->members()->where('role_in_team', 'leader')->exists()) {
+        // Only one leader per team. Only an ACTIVE leader blocks the
+        // appointment: a member removed from the team is soft-ended, and a
+        // departed leader must not keep the team permanently leaderless.
+        if ($validated['role_in_team'] === 'leader' && $team->members()->where('role_in_team', 'leader')->whereNull('ended_on')->exists()) {
             return response()->json([
                 'message' => 'This team already has a leader. Update the existing leader first.',
             ], 422);
@@ -178,6 +204,52 @@ class TeamController extends Controller
         return response()->json(['message' => 'Member removed from team.']);
     }
 
+    /**
+     * Change an existing member's role within the team.
+     *
+     * PATCH /api/v1/campaigns/{campaign}/teams/{team}/members/{member}
+     *
+     * This is what makes "appoint or change the team leader" possible without
+     * introducing a second leadership model: leadership IS the `leader` value
+     * of an existing membership. Promoting a member to leader demotes whoever
+     * currently leads in the same operation, so the one-leader-per-team
+     * invariant holds and a change of leader never leaves two leaders.
+     */
+    public function updateMember(Request $request, Campaign $campaign, Team $team, TeamMember $member): JsonResponse
+    {
+        $this->validateTeamScope($campaign, $team);
+        $this->authorize('manageMember', $team);
+
+        if ($member->team_id !== $team->id) {
+            abort(404, 'Member not found in this team.');
+        }
+
+        // A soft-ended row is history, not a current membership: it cannot be
+        // promoted back into the roster by a role change. Re-adding the person
+        // is the honest way to bring them back.
+        if ($member->ended_on !== null) {
+            return response()->json([
+                'message' => 'This person is no longer an active member of this team.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'role_in_team' => ['required', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::TEAM_MEMBER_ROLES)],
+        ]);
+
+        if ($validated['role_in_team'] === 'leader') {
+            $team->members()
+                ->where('role_in_team', 'leader')
+                ->whereNull('ended_on')
+                ->whereKeyNot($member->id)
+                ->update(['role_in_team' => 'member']);
+        }
+
+        $member->update($validated);
+
+        return response()->json($member->fresh('person'));
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     private function validateTeamScope(Campaign $campaign, Team $team): void
@@ -187,15 +259,23 @@ class TeamController extends Controller
         }
     }
 
-    private function validateSiteScope(Campaign $campaign, int $siteId): void
+    /**
+     * Resolve a mission site and prove it belongs to the given campaign.
+     *
+     * Returns the MissionSite so the caller can use it in an authorization
+     * check, or aborts 422 when the site does not belong to the campaign.
+     */
+    private function resolveSite(Campaign $campaign, int $siteId): MissionSite
     {
-        $exists = MissionSite::where('id', $siteId)
+        $site = MissionSite::where('id', $siteId)
             ->where('campaign_id', $campaign->id)
-            ->exists();
+            ->first();
 
-        if (! $exists) {
+        if (! $site) {
             abort(422, "Site {$siteId} does not belong to campaign {$campaign->id}.");
         }
+
+        return $site;
     }
 
     /**

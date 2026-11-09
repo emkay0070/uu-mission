@@ -3,22 +3,24 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
-use App\Mail\InvitationEmail;
 use App\Mail\VerificationEmail;
+use App\Models\MissionaryProfile;
+use App\Models\OrgMembership;
 use App\Models\Person;
-use App\Models\User;
 use App\Models\PersonAddress;
-use App\Models\PersonSkill;
 use App\Models\PersonLanguage;
 use App\Models\PersonMissionExperience;
+use App\Models\PersonSkill;
 use App\Models\PersonTraining;
-use App\Models\OrgMembership;
+use App\Models\User;
 use App\Services\AuthorizationService;
+use App\Services\WorkspaceResolver;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
@@ -38,7 +40,10 @@ use Illuminate\Validation\ValidationException;
  */
 class AuthController extends Controller
 {
-    public function __construct(private AuthorizationService $auth) {}
+    public function __construct(
+        private AuthorizationService $auth,
+        private WorkspaceResolver $workspaces,
+    ) {}
 
     /**
      * Authenticate an existing user and return a Sanctum token.
@@ -48,8 +53,8 @@ class AuthController extends Controller
     public function login(Request $request): JsonResponse
     {
         $request->validate([
-            'email'       => ['required', 'string', 'email'],
-            'password'    => ['required', 'string'],
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string'],
             'device_name' => ['sometimes', 'string', 'max:200'],
         ]);
 
@@ -75,9 +80,9 @@ class AuthController extends Controller
         $token = $user->createToken($deviceName, ['*'], now()->addMinutes(config('sanctum.expiration', 480)));
 
         return response()->json([
-            'token'      => $token->plainTextToken,
+            'token' => $token->plainTextToken,
             'expires_at' => $token->accessToken->expires_at,
-            'user'       => $this->userPayload($user),
+            'user' => $this->userPayload($user),
         ]);
     }
 
@@ -132,7 +137,7 @@ class AuthController extends Controller
     {
         return DB::transaction(function () use ($request) {
             // Support both simple signup format and full onboarding format
-            $isSimpleFormat = $request->has('first_name') && !$request->has('personal');
+            $isSimpleFormat = $request->has('first_name') && ! $request->has('personal');
 
             if ($isSimpleFormat) {
                 // Simple signup format (for /signup page)
@@ -242,7 +247,7 @@ class AuthController extends Controller
                 $person->update(['user_id' => $user->id]);
 
                 // Create MissionaryProfile for the person
-                \App\Models\MissionaryProfile::create([
+                MissionaryProfile::create([
                     'person_id' => $person->id,
                     'deployment_status' => 'available',
                 ]);
@@ -251,7 +256,7 @@ class AuthController extends Controller
             // Generate email verification token
             $verificationToken = Str::random(60);
             $tokenHash = Hash::make($verificationToken);
-            
+
             \DB::table('password_reset_tokens')->updateOrInsert(
                 ['email' => $user->email],
                 ['token' => $tokenHash, 'created_at' => now()]
@@ -307,7 +312,7 @@ class AuthController extends Controller
         ]);
 
         // Residence address
-        if (!empty($residenceData)) {
+        if (! empty($residenceData)) {
             PersonAddress::create([
                 'person_id' => $person->id,
                 'country' => $residenceData['country'] ?? null,
@@ -359,7 +364,7 @@ class AuthController extends Controller
     private function handleMinistryProfile(array $data, Person $person): void
     {
         // Skills
-        if (!empty($data['skills'])) {
+        if (! empty($data['skills'])) {
             foreach ($data['skills'] as $skill) {
                 PersonSkill::create([
                     'person_id' => $person->id,
@@ -373,7 +378,7 @@ class AuthController extends Controller
         }
 
         // Languages
-        if (!empty($data['languages'])) {
+        if (! empty($data['languages'])) {
             foreach ($data['languages'] as $language) {
                 PersonLanguage::updateOrCreate(
                     [
@@ -390,7 +395,7 @@ class AuthController extends Controller
         }
 
         // Mission experience
-        if (!empty($data['mission_experience'])) {
+        if (! empty($data['mission_experience'])) {
             foreach ($data['mission_experience'] as $experience) {
                 PersonMissionExperience::create([
                     'person_id' => $person->id,
@@ -411,7 +416,7 @@ class AuthController extends Controller
     private function handleReadiness(array $data, Person $person): void
     {
         // Training
-        if (!empty($data['training'])) {
+        if (! empty($data['training'])) {
             foreach ($data['training'] as $training) {
                 PersonTraining::create([
                     'person_id' => $person->id,
@@ -427,9 +432,9 @@ class AuthController extends Controller
         }
 
         // Store readiness notes in person notes
-        if (!empty($data['readiness_notes'])) {
+        if (! empty($data['readiness_notes'])) {
             $person->update([
-                'notes' => ($person->notes ?? '') . "\n\nReadiness: " . $data['readiness_notes'],
+                'notes' => ($person->notes ?? '')."\n\nReadiness: ".$data['readiness_notes'],
             ]);
         }
     }
@@ -456,14 +461,14 @@ class AuthController extends Controller
             }
         }
 
-        if (!$tokenRecord) {
+        if (! $tokenRecord) {
             throw ValidationException::withMessages([
                 'token' => ['Invalid or expired verification token.'],
             ]);
         }
 
         // Check token age (24 hours)
-        if (\Carbon\Carbon::parse($tokenRecord->created_at)->diffInHours(now()) > 24) {
+        if (Carbon::parse($tokenRecord->created_at)->diffInHours(now()) > 24) {
             \DB::table('password_reset_tokens')->where('email', $tokenRecord->email)->delete();
             throw ValidationException::withMessages([
                 'token' => ['Verification token has expired. Please request a new one.'],
@@ -473,7 +478,7 @@ class AuthController extends Controller
         // Find user and activate
         $user = User::where('email', $tokenRecord->email)->first();
 
-        if (!$user) {
+        if (! $user) {
             throw ValidationException::withMessages([
                 'token' => ['User not found.'],
             ]);
@@ -507,7 +512,7 @@ class AuthController extends Controller
             ->where('email', $request->email)
             ->first();
 
-        if (!$resetRecord || !Hash::check($request->token, $resetRecord->token)) {
+        if (! $resetRecord || ! Hash::check($request->token, $resetRecord->token)) {
             throw ValidationException::withMessages([
                 'token' => ['Invalid or expired reset token.'],
             ]);
@@ -515,7 +520,7 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user) {
+        if (! $user) {
             throw ValidationException::withMessages([
                 'email' => ['User not found.'],
             ]);
@@ -538,8 +543,8 @@ class AuthController extends Controller
     {
         $request->validate([
             'current_password' => ['required', 'string'],
-            'new_password'     => ['required', 'string', 'confirmed',
-                                   Password::min(8)->mixedCase()->numbers()],
+            'new_password' => ['required', 'string', 'confirmed',
+                Password::min(8)->mixedCase()->numbers()],
         ]);
 
         $user = $request->user();
@@ -570,13 +575,18 @@ class AuthController extends Controller
             ->with('role')
             ->get();
 
-        $roles = $roleAssignments->map(fn($ra) => [
+        $roles = $roleAssignments->map(fn ($ra) => [
             'code' => $ra->role->code,
             'label' => $ra->role->label,
             'scope_type' => $ra->role->scope_type,
         ])->toArray();
 
-        // Determine primary role for routing
+        // Determine primary role for routing.
+        //
+        // COMPATIBILITY FIELD — retained while consumers migrate to the
+        // workspace model below. New code must read `workspaces` instead: a
+        // binary admin/missionary flag cannot express a person who holds, for
+        // example, only site-operational authority.
         $primaryRole = null;
         foreach ($roleAssignments as $ra) {
             if (in_array($ra->role->code, ['platform_admin', 'admin', 'union_director', 'conference_director'])) {
@@ -584,18 +594,33 @@ class AuthController extends Controller
                 break;
             }
         }
-        if (!$primaryRole && $roleAssignments->isNotEmpty()) {
+        // Only grant 'missionary' primary_role when the user has completed
+        // onboarding: a linked Person record AND a MissionaryProfile. An
+        // active role assignment alone is not sufficient — an account that
+        // has merely registered (or had a manually inserted assignment) must
+        // not be treated as a fully onboarded missionary.
+        if (! $primaryRole && $roleAssignments->isNotEmpty() && $person && $person->missionaryProfile) {
             $primaryRole = 'missionary';
         }
 
         return [
-            'id'            => $user->id,
-            'email'         => $user->email,
-            'status'        => $user->status,
-            'timezone'      => $user->timezone,
+            'id' => $user->id,
+            'email' => $user->email,
+            'status' => $user->status,
+            'timezone' => $user->timezone,
             'last_login_at' => $user->last_login_at,
-            'primary_role'  => $primaryRole,
-            'roles'         => $roles,
+            'primary_role' => $primaryRole,
+            'roles' => $roles,
+            // Operational workspaces this person may enter, derived entirely
+            // from their effective (active, valid, unrevoked) role assignments
+            // and the authority each one actually carries. An empty array means
+            // no operational workspace is available yet — the client must show
+            // a neutral state rather than forcing one.
+            //
+            // This is the authoritative answer to "what may this person do and
+            // where?"; `primary_role` above is a deprecated two-value summary
+            // of the same facts.
+            'workspaces' => $this->workspaces->resolve($user),
             // Effective capabilities resolved by the single authorization engine.
             //
             // `permissions` is the union of permission codes across all active
@@ -604,22 +629,22 @@ class AuthController extends Controller
             // always re-checked against the requested resource's real scope.
             // `scopes` describes the active assignments so the client can show
             // context without treating a scoped permission as global.
-            'permissions'   => $this->auth->getEffectivePermissions($user),
-            'scopes'        => $this->auth->getEffectiveScopes($user),
-            'person'        => $person ? [
-                'id'         => $person->id,
+            'permissions' => $this->auth->getEffectivePermissions($user),
+            'scopes' => $this->auth->getEffectiveScopes($user),
+            'person' => $person ? [
+                'id' => $person->id,
                 'first_name' => $person->first_name,
                 'middle_name' => $person->middle_name,
-                'last_name'  => $person->last_name,
+                'last_name' => $person->last_name,
                 'preferred_name' => $person->preferred_name,
-                'full_name'  => $person->full_name,
-                'gender'     => $person->gender,
+                'full_name' => $person->full_name,
+                'gender' => $person->gender,
                 'date_of_birth' => $person->date_of_birth,
                 'nationality' => $person->nationality,
-                'phone'      => $person->phone,
+                'phone' => $person->phone,
                 'whatsapp_phone' => $person->whatsapp_phone,
                 'alternative_phone' => $person->alternative_phone,
-                'email'      => $person->email,
+                'email' => $person->email,
                 'preferred_contact_method' => $person->preferred_contact_method,
                 'emergency_contact_name' => $person->emergency_contact_name,
                 'emergency_contact_relationship' => $person->emergency_contact_relationship,

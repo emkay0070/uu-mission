@@ -2,8 +2,13 @@
 
 namespace App\Providers;
 
+use App\Models\Department;
+use App\Models\OfficeHeld;
+use App\Models\UserRoleAssignment;
+use App\Policies\DepartmentPolicy;
+use App\Policies\OfficePolicy;
+use App\Policies\UserRoleAssignmentPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
-use Illuminate\Support\Facades\Gate;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -13,9 +18,9 @@ class AuthServiceProvider extends ServiceProvider
      * @var array<class-string, class-string>
      */
     protected $policies = [
-        \App\Models\OfficeHeld::class => \App\Policies\OfficePolicy::class,
-        \App\Models\Department::class => \App\Policies\DepartmentPolicy::class,
-        \App\Models\UserRoleAssignment::class => \App\Policies\UserRoleAssignmentPolicy::class,
+        OfficeHeld::class => OfficePolicy::class,
+        Department::class => DepartmentPolicy::class,
+        UserRoleAssignment::class => UserRoleAssignmentPolicy::class,
     ];
 
     /**

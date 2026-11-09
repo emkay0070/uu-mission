@@ -2,15 +2,16 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AttendanceRegister;
-use App\Models\AttendanceEntry;
 use App\Models\Activity;
 use App\Models\ActivityParticipant;
+use App\Models\AttendanceEntry;
+use App\Models\AttendanceRegister;
 use App\Models\MissionSite;
 use App\Models\Person;
 use App\Services\AuthorizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -42,12 +43,12 @@ class AttendanceController extends Controller
         $this->authorize('viewAny', AttendanceRegister::class);
 
         $request->validate([
-            'campaign_id'     => ['sometimes', 'integer', 'exists:campaigns,id'],
+            'campaign_id' => ['sometimes', 'integer', 'exists:campaigns,id'],
             'mission_site_id' => ['sometimes', 'integer', 'exists:mission_sites,id'],
-            'activity_id'     => ['sometimes', 'integer', 'exists:activities,id'],
-            'date'            => ['sometimes', 'date'],
-            'status'          => ['sometimes', 'string', 'in:open,submitted,verified'],
-            'per_page'        => ['sometimes', 'integer', 'between:5,100'],
+            'activity_id' => ['sometimes', 'integer', 'exists:activities,id'],
+            'date' => ['sometimes', 'date'],
+            'status' => ['sometimes', 'string', 'in:open,submitted,verified'],
+            'per_page' => ['sometimes', 'integer', 'between:5,100'],
         ]);
 
         // Constrain to the user's authorised scopes. attendance.submit is
@@ -81,7 +82,7 @@ class AttendanceController extends Controller
         }
 
         $registers = $query->orderBy('register_date', 'desc')
-                          ->paginate($request->input('per_page', 20));
+            ->paginate($request->input('per_page', 20));
 
         return response()->json($registers);
     }
@@ -97,12 +98,12 @@ class AttendanceController extends Controller
         $this->authorize('create', AttendanceRegister::class);
 
         $validated = $request->validate([
-            'campaign_id'     => ['required', 'integer', 'exists:campaigns,id'],
+            'campaign_id' => ['required', 'integer', 'exists:campaigns,id'],
             'mission_site_id' => ['required', 'integer', 'exists:mission_sites,id'],
-            'activity_id'     => ['sometimes', 'integer', 'exists:activities,id'],
-            'register_name'   => ['required', 'string', 'max:250'],
-            'register_date'   => ['required', 'date'],
-            'register_type'   => ['sometimes', 'string', 'in:meeting,roll_call,service,training,community_event'],
+            'activity_id' => ['sometimes', 'integer', 'exists:activities,id'],
+            'register_name' => ['required', 'string', 'max:250'],
+            'register_date' => ['required', 'date'],
+            'register_type' => ['sometimes', 'string', 'in:meeting,roll_call,service,training,community_event'],
         ]);
 
         // Verify the user is authorised for this campaign/site.
@@ -192,8 +193,6 @@ class AttendanceController extends Controller
      * Rows are keyed by `entry_uuid` where an entry exists; the client mints a
      * UUID for rows that have none yet, so a mark/unmark round trip stays
      * idempotent.
-     *
-     * @return \Illuminate\Http\JsonResponse
      */
     public function participants(AttendanceRegister $register): JsonResponse
     {
@@ -236,7 +235,7 @@ class AttendanceController extends Controller
             $candidates = Person::with('outreachContact')
                 ->whereHas('attendanceEntries.register', function ($q) use ($register) {
                     $q->where('campaign_id', $register->campaign_id)
-                      ->where('mission_site_id', $register->mission_site_id);
+                        ->where('mission_site_id', $register->mission_site_id);
                 })
                 ->get(['id', 'first_name', 'last_name', 'phone']);
 
@@ -287,27 +286,27 @@ class AttendanceController extends Controller
         ?string $joinedDate,
     ): array {
         return [
-            'entry_id'      => $entry?->id,
-            'entry_uuid'    => $entry?->entry_uuid,
-            'person_id'     => $person?->id,
-            'name'          => $person?->full_name
+            'entry_id' => $entry?->id,
+            'entry_uuid' => $entry?->entry_uuid,
+            'person_id' => $person?->id,
+            'name' => $person?->full_name
                                 ?? $entry?->visitor_name
                                 ?? 'Anonymous attendee',
-            'village'       => $person?->outreachContact?->village,
-            'phone'         => $person?->phone ?? $entry?->visitor_phone,
+            'village' => $person?->outreachContact?->village,
+            'phone' => $person?->phone ?? $entry?->visitor_phone,
             // Optional metadata captured on the day must survive the
             // save → response → reload cycle. Without this the UI would show
             // a blank gender field even though the row was recorded with one.
             'visitor_gender' => $entry?->visitor_gender,
-            'joined_date'   => $joinedDate,
-            'is_on_roster'  => $isOnRoster,
-            'is_present'    => $entry !== null,
-            'is_walk_in'    => $entry?->is_walk_in ?? false,
-            'is_anonymous'  => $entry?->is_anonymous ?? false,
+            'joined_date' => $joinedDate,
+            'is_on_roster' => $isOnRoster,
+            'is_present' => $entry !== null,
+            'is_walk_in' => $entry?->is_walk_in ?? false,
+            'is_anonymous' => $entry?->is_anonymous ?? false,
             'attendee_type' => $entry?->attendee_type,
             'is_first_time' => $entry?->is_first_time ?? false,
             'decision_made' => $entry?->decision_made,
-            'notes'         => $entry?->notes,
+            'notes' => $entry?->notes,
         ];
     }
 
@@ -359,18 +358,18 @@ class AttendanceController extends Controller
         }
 
         $validated = $request->validate([
-            'entries'                   => ['required', 'array'],
-            'entries.*.entry_uuid'      => ['required', 'uuid', 'distinct'],
-            'entries.*.is_present'      => ['required', 'boolean'],
-            'entries.*.person_id'       => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
-            'entries.*.visitor_name'    => ['sometimes', 'nullable', 'string', 'max:200'],
-            'entries.*.visitor_phone'   => ['sometimes', 'nullable', 'string', 'max:30'],
-            'entries.*.visitor_gender'  => ['sometimes', 'nullable', 'string', 'in:male,female,unspecified'],
-            'entries.*.is_anonymous'    => ['sometimes', 'boolean'],
-            'entries.*.is_first_time'   => ['sometimes', 'boolean'],
-            'entries.*.attendee_type'   => ['sometimes', 'nullable', 'string', 'in:missionary,visitor,local_member'],
-            'entries.*.decision_made'   => ['sometimes', 'nullable', 'string', 'in:accepted_christ,requested_bible_study,joined_church,none'],
-            'entries.*.notes'           => ['sometimes', 'nullable', 'string'],
+            'entries' => ['required', 'array'],
+            'entries.*.entry_uuid' => ['required', 'uuid', 'distinct'],
+            'entries.*.is_present' => ['required', 'boolean'],
+            'entries.*.person_id' => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
+            'entries.*.visitor_name' => ['sometimes', 'nullable', 'string', 'max:200'],
+            'entries.*.visitor_phone' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'entries.*.visitor_gender' => ['sometimes', 'nullable', 'string', 'in:male,female,unspecified'],
+            'entries.*.is_anonymous' => ['sometimes', 'boolean'],
+            'entries.*.is_first_time' => ['sometimes', 'boolean'],
+            'entries.*.attendee_type' => ['sometimes', 'nullable', 'string', 'in:missionary,visitor,local_member'],
+            'entries.*.decision_made' => ['sometimes', 'nullable', 'string', 'in:accepted_christ,requested_bible_study,joined_church,none'],
+            'entries.*.notes' => ['sometimes', 'nullable', 'string'],
         ]);
 
         // ── Identity validation (per row) ─────────────────────────────────────
@@ -391,7 +390,7 @@ class AttendanceController extends Controller
         if ($identityErrors !== []) {
             return response()->json([
                 'message' => 'The given data was invalid.',
-                'errors'  => $identityErrors,
+                'errors' => $identityErrors,
             ], 422);
         }
 
@@ -421,12 +420,13 @@ class AttendanceController extends Controller
 
                 if (! $entryData['is_present']) {
                     $existing?->delete();
+
                     continue;
                 }
 
-                $personId     = $entryData['person_id'] ?? null;
-                $visitorName  = $entryData['visitor_name'] ?? null;
-                $isAnonymous  = (bool) ($entryData['is_anonymous'] ?? false);
+                $personId = $entryData['person_id'] ?? null;
+                $visitorName = $entryData['visitor_name'] ?? null;
+                $isAnonymous = (bool) ($entryData['is_anonymous'] ?? false);
 
                 // Historical snapshot: taken ONCE when the row is first written
                 // and then preserved untouched. It is never recomputed from the
@@ -438,15 +438,15 @@ class AttendanceController extends Controller
 
                 $attributes = [
                     'attendee_type' => $entryData['attendee_type'] ?? null,
-                    'person_id'     => $personId,
-                    'visitor_name'  => $isAnonymous ? null : $visitorName,
+                    'person_id' => $personId,
+                    'visitor_name' => $isAnonymous ? null : $visitorName,
                     'visitor_phone' => $isAnonymous ? null : ($entryData['visitor_phone'] ?? null),
                     'visitor_gender' => $isAnonymous ? null : ($entryData['visitor_gender'] ?? null),
-                    'is_anonymous'  => $isAnonymous,
-                    'is_walk_in'    => $isWalkIn,
+                    'is_anonymous' => $isAnonymous,
+                    'is_walk_in' => $isWalkIn,
                     'is_first_time' => $entryData['is_first_time'] ?? false,
                     'decision_made' => $entryData['decision_made'] ?? null,
-                    'notes'         => $entryData['notes'] ?? null,
+                    'notes' => $entryData['notes'] ?? null,
                 ];
 
                 if ($existing !== null) {
@@ -454,7 +454,7 @@ class AttendanceController extends Controller
                 } else {
                     AttendanceEntry::create([
                         'attendance_register_id' => $register->id,
-                        'entry_uuid'             => $entryData['entry_uuid'],
+                        'entry_uuid' => $entryData['entry_uuid'],
                         ...$attributes,
                     ]);
                 }
@@ -463,14 +463,15 @@ class AttendanceController extends Controller
             DB::commit();
 
             return response()->json([
-                'message'  => 'Attendance updated successfully.',
+                'message' => 'Attendance updated successfully.',
                 'register' => $register->fresh(['entries.person']),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'message' => 'Failed to update attendance.',
-                'error'   => $e->getMessage(),
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -505,8 +506,10 @@ class AttendanceController extends Controller
         ]);
 
         $entry->update([
-            'person_id'    => $validated['person_id'],
+            'person_id' => $validated['person_id'],
             'is_anonymous' => false,
+            'linked_by_user_id' => $request->user()->id,
+            'linked_at' => now(),
         ]);
 
         return response()->json($entry->fresh('person'));
@@ -549,7 +552,7 @@ class AttendanceController extends Controller
     private function validateIdentity(array $row): ?string
     {
         $hasPerson = ! empty($row['person_id']);
-        $hasName   = ! empty($row['visitor_name']);
+        $hasName = ! empty($row['visitor_name']);
         $anonymous = (bool) ($row['is_anonymous'] ?? false);
 
         if ($anonymous && ($hasPerson || $hasName)) {
@@ -675,13 +678,13 @@ class AttendanceController extends Controller
         }
 
         $register->update([
-            'status'              => 'verified',
+            'status' => 'verified',
             'verified_by_user_id' => $request->user()->id,
-            'verified_at'         => now(),
+            'verified_at' => now(),
         ]);
 
         return response()->json([
-            'message'  => 'Attendance register verified successfully.',
+            'message' => 'Attendance register verified successfully.',
             'register' => $register->fresh(),
         ]);
     }
@@ -739,7 +742,7 @@ class AttendanceController extends Controller
             ->whereDate('register_date', $date)
             ->get();
 
-        $siteRegisters     = $siblings->whereNull('activity_id');
+        $siteRegisters = $siblings->whereNull('activity_id');
         $activityRegisters = $siblings->whereNotNull('activity_id');
 
         // ── Index identifiable attendance on both sides by permanent person id ─
@@ -760,9 +763,9 @@ class AttendanceController extends Controller
                     continue;
                 }
                 $activityByPerson[$entry->person_id][] = [
-                    'register_id'     => $activityRegister->id,
-                    'activity_id'     => $activityRegister->activity_id,
-                    'activity_title'  => $activityRegister->activity?->title,
+                    'register_id' => $activityRegister->id,
+                    'activity_id' => $activityRegister->activity_id,
+                    'activity_title' => $activityRegister->activity?->title,
                     'register_status' => $activityRegister->status,
                 ];
             }
@@ -778,18 +781,18 @@ class AttendanceController extends Controller
 
         $people = [];
         foreach ($personIds as $personId) {
-            $inSite       = isset($sitePersonIds[$personId]);
+            $inSite = isset($sitePersonIds[$personId]);
             $inActivities = $activityByPerson[$personId] ?? [];
 
             $people[] = [
-                'person_id'           => (int) $personId,
-                'name'                => $peopleById->get($personId)?->full_name,
-                'in_site_register'    => $inSite,
+                'person_id' => (int) $personId,
+                'name' => $peopleById->get($personId)?->full_name,
+                'in_site_register' => $inSite,
                 'in_activity_registers' => $inActivities,
                 // 'not_recorded' is deliberate: a site attendee with no activity
                 // entry is not "absent" — nobody has recorded them either way.
                 'activity_attendance' => $inActivities === [] ? 'not_recorded' : 'recorded',
-                'state'               => $inSite
+                'state' => $inSite
                     ? ($inActivities === [] ? 'site_only' : 'site_and_activity')
                     : 'activity_only',
             ];
@@ -802,7 +805,7 @@ class AttendanceController extends Controller
         ));
 
         // ── Unmatchable rows: counted, never merged ────────────────────────────
-        $siteUnmatched     = $this->countUnmatchedEntries($siteRegisters->flatMap->entries);
+        $siteUnmatched = $this->countUnmatchedEntries($siteRegisters->flatMap->entries);
         $activityUnmatched = $this->countUnmatchedEntries($activityRegisters->flatMap->entries);
 
         // Unreconciled: a completed site register is affected by later activity
@@ -813,35 +816,35 @@ class AttendanceController extends Controller
         $isUnreconciled = $siteClosed && $missingFromSite !== [];
 
         return response()->json([
-            'register'          => [
-                'id'             => $register->id,
-                'activity_id'    => $register->activity_id,
-                'status'         => $register->status,
-                'register_date'  => $date,
+            'register' => [
+                'id' => $register->id,
+                'activity_id' => $register->activity_id,
+                'status' => $register->status,
+                'register_date' => $date,
                 'mission_site_id' => (int) $register->mission_site_id,
             ],
-            'register_date'     => $date,
-            'site_registers'    => $siteRegisters->map(fn (AttendanceRegister $r) => [
-                'id'     => $r->id,
-                'name'   => $r->register_name,
+            'register_date' => $date,
+            'site_registers' => $siteRegisters->map(fn (AttendanceRegister $r) => [
+                'id' => $r->id,
+                'name' => $r->register_name,
                 'status' => $r->status,
             ])->values(),
             'activity_registers' => $activityRegisters->map(fn (AttendanceRegister $r) => [
-                'id'             => $r->id,
-                'activity_id'    => $r->activity_id,
+                'id' => $r->id,
+                'activity_id' => $r->activity_id,
                 'activity_title' => $r->activity?->title,
-                'status'         => $r->status,
+                'status' => $r->status,
             ])->values(),
-            'people'             => $people,
+            'people' => $people,
             'missing_from_site_register' => $missingFromSite,
-            'unmatched'          => [
-                'site'     => $siteUnmatched,
+            'unmatched' => [
+                'site' => $siteUnmatched,
                 'activity' => $activityUnmatched,
             ],
-            'unreconciled'       => [
+            'unreconciled' => [
                 'is_unreconciled' => $isUnreconciled,
-                'pending_count'   => count($missingFromSite),
-                'message'         => $isUnreconciled
+                'pending_count' => count($missingFromSite),
+                'message' => $isUnreconciled
                     ? 'The site register was already submitted, but later activity records include identifiable people who are not on it. Reopen the register if they should be added.'
                     : null,
             ],
@@ -869,12 +872,12 @@ class AttendanceController extends Controller
         $this->authorize('viewAny', AttendanceRegister::class);
 
         $request->validate([
-            'campaign_id'     => ['sometimes', 'integer', 'exists:campaigns,id'],
+            'campaign_id' => ['sometimes', 'integer', 'exists:campaigns,id'],
             'mission_site_id' => ['sometimes', 'integer', 'exists:mission_sites,id'],
-            'activity_id'     => ['sometimes', 'integer', 'exists:activities,id'],
-            'date_from'       => ['sometimes', 'date'],
-            'date_to'         => ['sometimes', 'date'],
-            'status'          => ['sometimes', 'string', 'in:open,submitted,verified'],
+            'activity_id' => ['sometimes', 'integer', 'exists:activities,id'],
+            'date_from' => ['sometimes', 'date'],
+            'date_to' => ['sometimes', 'date'],
+            'status' => ['sometimes', 'string', 'in:open,submitted,verified'],
         ]);
 
         // attendance.submit is included because the seeded missionary can record
@@ -909,9 +912,9 @@ class AttendanceController extends Controller
 
         $registers = $query->get();
 
-        $siteTotals     = $this->zeroSummary();
+        $siteTotals = $this->zeroSummary();
         $activityTotals = $this->zeroSummary();
-        $byActivity     = [];
+        $byActivity = [];
 
         foreach ($registers as $register) {
             $counts = $this->countEntryForms($register->entries);
@@ -921,6 +924,7 @@ class AttendanceController extends Controller
                 foreach ($counts as $key => $value) {
                     $siteTotals[$key] += $value;
                 }
+
                 continue;
             }
 
@@ -933,7 +937,7 @@ class AttendanceController extends Controller
             if (! isset($byActivity[$activityId])) {
                 $byActivity[$activityId] = [
                     'activity_id' => $activityId,
-                    'title'       => $register->activity?->title,
+                    'title' => $register->activity?->title,
                     ...$this->zeroSummary(),
                 ];
             }
@@ -945,16 +949,16 @@ class AttendanceController extends Controller
 
         return response()->json([
             'filters' => [
-                'campaign_id'     => $request->input('campaign_id'),
+                'campaign_id' => $request->input('campaign_id'),
                 'mission_site_id' => $request->input('mission_site_id'),
-                'activity_id'     => $request->input('activity_id'),
-                'date_from'       => $request->input('date_from'),
-                'date_to'         => $request->input('date_to'),
-                'status'          => $request->input('status'),
+                'activity_id' => $request->input('activity_id'),
+                'date_from' => $request->input('date_from'),
+                'date_to' => $request->input('date_to'),
+                'status' => $request->input('status'),
             ],
-            'site_attendance'     => $siteTotals,
+            'site_attendance' => $siteTotals,
             'activity_attendance' => $activityTotals,
-            'by_activity'         => array_values($byActivity),
+            'by_activity' => array_values($byActivity),
             // Stated in the payload itself so no consumer invents a combined
             // "total attendance" by adding two numbers that overlap.
             'note' => 'Site attendance and activity attendance are independent records and are never added together.',
@@ -972,21 +976,21 @@ class AttendanceController extends Controller
     private function zeroSummary(): array
     {
         return [
-            'registers'            => 0,
-            'entries'              => 0,
-            'identified'           => 0,
-            'named_unidentified'   => 0,
-            'anonymous'            => 0,
-            'walk_in'              => 0,
-            'first_time'           => 0,
-            'decisions_recorded'   => 0,
+            'registers' => 0,
+            'entries' => 0,
+            'identified' => 0,
+            'named_unidentified' => 0,
+            'anonymous' => 0,
+            'walk_in' => 0,
+            'first_time' => 0,
+            'decisions_recorded' => 0,
         ];
     }
 
     /**
      * Count one register's entries by identity form and arrival snapshot.
      *
-     * @param  \Illuminate\Support\Collection<int, \App\Models\AttendanceEntry>  $entries
+     * @param  Collection<int, AttendanceEntry>  $entries
      * @return array<string, int>
      */
     private function countEntryForms($entries): array
@@ -1023,13 +1027,13 @@ class AttendanceController extends Controller
      * Count the rows that reconciliation cannot match by identity — anonymous
      * and named-but-unidentified attendances — on one side of the comparison.
      *
-     * @param  \Illuminate\Support\Collection<int, \App\Models\AttendanceEntry>  $entries
+     * @param  Collection<int, AttendanceEntry>  $entries
      * @return array<string, int>
      */
     private function countUnmatchedEntries($entries): array
     {
         $anonymous = 0;
-        $named     = 0;
+        $named = 0;
 
         foreach ($entries as $entry) {
             if ($entry->person_id !== null) {
@@ -1043,7 +1047,7 @@ class AttendanceController extends Controller
         }
 
         return [
-            'anonymous'          => $anonymous,
+            'anonymous' => $anonymous,
             'named_unidentified' => $named,
         ];
     }

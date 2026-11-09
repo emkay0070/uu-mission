@@ -396,8 +396,8 @@ class WorkspaceController extends Controller
     }
 
     /**
-     * Return the mission sites the authenticated user is authorised to record
-     * outcomes at, with their campaign context.
+     * Return the mission sites the authenticated user is authorised to see,
+     * with their campaign context.
      *
      * GET /api/v1/workspace/my-sites
      *
@@ -408,9 +408,15 @@ class WorkspaceController extends Controller
      * the parent site it belongs to. The client must never derive this list
      * from raw scopes; it simply renders what it is given.
      *
+     * Scope is resolved with NO permission filter, mirroring the
+     * permission-agnostic visibility rules of AuthorizationService::canViewSite()
+     * — a site officer's authority is expressed by holding an assignment that
+     * covers the site, not by holding one particular capability. Every
+     * assignment the user holds is expanded, so a person authorised for several
+     * sites sees all of them rather than only the first.
+     *
      * Read-only: this endpoint resolves CONTEXT and grants no permissions of
-     * its own. It returns an empty list when the user holds no outcomes.record
-     * scope.
+     * its own.
      */
     public function mySites(Request $request): JsonResponse
     {
@@ -423,7 +429,7 @@ class WorkspaceController extends Controller
         // scopeQuery fails closed: no authorised scopes yields no rows.
         $this->auth->scopeQuery(
             $query,
-            $this->auth->getAuthorisedScopes($user, 'outcomes.record'),
+            $this->auth->getAuthorisedScopes($user),
             'campaign_id',
             'id'
         );

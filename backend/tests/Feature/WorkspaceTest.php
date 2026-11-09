@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Models\UserRoleAssignment;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
+use Tests\Traits\PublishesRolePermissions;
 
 /**
  * WorkspaceTest — verifies missionary workspace endpoints.
@@ -34,13 +35,19 @@ use Tests\TestCase;
  */
 class WorkspaceTest extends TestCase
 {
+    use PublishesRolePermissions;
     use RefreshDatabase;
 
     private OrgUnit $uu;
+
     private OrgUnit $cuc;
+
     private Campaign $campaign;
+
     private MissionSite $site;
+
     private Team $team;
+
     private SystemRole $roleMissionary;
 
     protected function setUp(): void
@@ -438,7 +445,7 @@ class WorkspaceTest extends TestCase
             return Permission::firstOrCreate(['code' => $pc], ['label' => $pc, 'module' => explode('.', $pc)[0]])->id;
         })->toArray();
 
-        $role->permissions()->sync($permIds);
+        $this->publishRolePermissions($role, $permIds);
 
         return $role;
     }

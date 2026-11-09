@@ -36,10 +36,10 @@ final class WorkflowDefinitions
      * Campaigns never move backwards. Archived is a terminal state.
      */
     public const CAMPAIGN_TRANSITIONS = [
-        'planning'  => ['active'],
-        'active'    => ['completed'],
+        'planning' => ['active'],
+        'active' => ['completed'],
         'completed' => ['archived'],
-        'archived'  => [],
+        'archived' => [],
     ];
 
     /** Statuses that lock a campaign — no mutations to sites/teams allowed. */
@@ -119,8 +119,8 @@ final class WorkflowDefinitions
      *   campaign → campaign leadership reviews it
      */
     public const REPORT_SUBMIT_REVIEW_STATE = [
-        'team'     => 'pending_team_review',
-        'site'     => 'pending_campaign_review',
+        'team' => 'pending_team_review',
+        'site' => 'pending_campaign_review',
         'campaign' => 'pending_campaign_review',
     ];
 
@@ -178,6 +178,27 @@ final class WorkflowDefinitions
      * The uniqueness rule (one leader per team) is enforced in TeamController.
      */
     public const TEAM_MEMBER_ROLES = ['leader', 'deputy', 'member'];
+
+    // ── Resources ───────────────────────────────────────────────────────────
+
+    /** All valid resource status values. */
+    public const RESOURCE_STATUSES = ['draft', 'pending_review', 'published', 'archived'];
+
+    /**
+     * Valid transitions for resource publishing workflow.
+     * Draft → Pending Review → Published → Archived.
+     * Pending Review can return to Draft for corrections.
+     * Published can be Archived but not deleted.
+     */
+    public const RESOURCE_TRANSITIONS = [
+        'draft' => ['pending_review'],
+        'pending_review' => ['published', 'draft'],
+        'published' => ['archived'],
+        'archived' => [],
+    ];
+
+    /** Visibility scopes for resources. */
+    public const RESOURCE_VISIBILITY_SCOPES = ['union', 'conference', 'campaign', 'site', 'team'];
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
