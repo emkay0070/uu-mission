@@ -191,6 +191,44 @@ class ScopedAuthorizationTest extends TestCase
             ->assertStatus(201);
     }
 
+    #[Test]
+    public function platform_admin_can_create_assignment_with_site_coordinator_role(): void
+    {
+        // Regression: assigning a site-scoped system role (e.g. Site
+        // Coordinator) through Campaign Deployments runs a second
+        // authorisation check on UserRoleAssignment::create. That policy
+        // requires every permission carried by the role to have an active
+        // delegation covering the target scope. Without global delegations
+        // (see 2026_11_06_194435_backfill_global_permission_delegations),
+        // production rejects this with 403 even for a platform administrator.
+        $role = $this->createRole('site_coordinator_deploy', 'site', array_merge(
+            $this->coordinatorPerms(),
+            ['assignments.manage']
+        ));
+        // Mirror the production baseline: grant global delegations for every
+        // permission carried by the role so UserRoleAssignmentPolicy's
+        // delegation check passes at any target scope.
+        $this->delegateRoleAt($role, 'global', 0);
+        $admin = $this->createUserWithGlobalRole($this->roleAdmin);
+        $targetUser = User::factory()->create();
+        $person = Person::factory()->create(['user_id' => $targetUser->id]);
+
+        $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignA->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteA1->id,
+                'system_role_id' => $role->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => $targetUser->id,
+            'system_role_id' => $role->id,
+            'scope_type' => 'site',
+            'scoped_site_id' => $this->siteA1->id,
+        ]);
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // C. CAMPAIGN SCOPE — campaign_leader for Campaign A
     // ══════════════════════════════════════════════════════════════════════════
