@@ -6,7 +6,7 @@ import {
   FileText, MessageSquare, LogOut, User, MoreHorizontal, Image, ShieldAlert, Target, ClipboardList,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/auth';
 import { canAccessModule, moduleForPath, type WorkspaceModuleKey } from '@/lib/permissions';
 import { WorkspaceSwitcherLinks } from '@/components/WorkspaceSwitcher';
@@ -56,6 +56,19 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
   const { user, logout } = useAuthStore();
   const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // Dismiss any open mobile popover as soon as the route changes. This covers
+  // navigation from the More drawer, the main bottom-nav items, browser
+  // back/forward, and redirects — not just clicks on the drawer's own links.
+  useEffect(() => {
+    setMoreOpen(false);
+    setProfileOpen(false);
+  }, [pathname]);
+
+  const closeMenus = () => {
+    setMoreOpen(false);
+    setProfileOpen(false);
+  };
 
   async function handleLogout() {
     await logout();
@@ -142,7 +155,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
 
         {/* Mobile header */}
         {showHeader && (
-          <header className="lg:hidden flex items-center justify-end px-3 py-2 glass-nav">
+          <header className="lg:hidden relative z-30 flex items-center justify-end px-3 py-2 glass-nav">
             <div className="relative">
               <button
                 onClick={() => setProfileOpen(!profileOpen)}
@@ -269,8 +282,18 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
         })}
       </aside>
 
+      {/* Mobile popover backdrop — tapping the page dismisses the More or
+          Profile drawer before it can navigate anywhere else. */}
+      {(moreOpen || profileOpen) && (
+        <div
+          className="lg:hidden fixed inset-0 z-10"
+          aria-hidden="true"
+          onClick={closeMenus}
+        />
+      )}
+
       {/* Mobile bottom nav */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 glass-nav border-t border-white/10 px-2 py-3 safe-area-bottom z-20">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 glass-nav px-2 py-3 safe-area-bottom z-20">
         <div className="flex items-center justify-around">
           {mainNav.map(({ href, label, icon: Icon, featured }) => {
             const active = isActive(href);
@@ -278,6 +301,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
               <Link
                 key={href}
                 href={href}
+                onClick={closeMenus}
                 className={cn(
                   'relative flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200',
                   active
@@ -295,7 +319,11 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
             );
           })}
           <button
-            onClick={() => setMoreOpen(!moreOpen)}
+            onClick={() => {
+              setMoreOpen((open) => !open);
+              setProfileOpen(false);
+            }}
+            aria-expanded={moreOpen}
             className={cn(
               'relative flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200',
               moreOpen ? 'bg-brand-600/90 text-white' : 'text-slate-500'
@@ -304,7 +332,11 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
             <MoreHorizontal className="w-5 h-5" />
           </button>
           <button
-            onClick={() => setProfileOpen(!profileOpen)}
+            onClick={() => {
+              setProfileOpen((open) => !open);
+              setMoreOpen(false);
+            }}
+            aria-expanded={profileOpen}
             className={cn(
               'relative flex flex-col items-center justify-center w-14 h-14 rounded-2xl transition-all duration-200 overflow-hidden',
               profileOpen ? 'bg-brand-600/90 text-white' : 'text-slate-500'
@@ -332,7 +364,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
                   <Link
                     key={href}
                     href={href}
-                    onClick={() => setMoreOpen(false)}
+                    onClick={closeMenus}
                     className={cn(
                       'flex items-center gap-3 px-4 py-3 rounded-2xl transition-all',
                       active
@@ -361,7 +393,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
               </div>
               <Link
                 href="/profile"
-                onClick={() => setProfileOpen(false)}
+                onClick={closeMenus}
                 className="w-full flex items-center gap-3 px-4 py-3 text-sm text-slate-300 hover:bg-white/10 transition-colors"
               >
                 <User className="w-4 h-4" />

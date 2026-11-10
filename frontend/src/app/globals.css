@@ -119,6 +119,20 @@
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
+@utility glass-nav {
+  /* Blur via Tailwind's backdrop utilities: the compiler emits both the
+     standard and -webkit- forms, which a hand-written pair does not survive. */
+  @apply backdrop-blur-2xl backdrop-saturate-150;
+  background: var(--glass-nav-bg, rgba(13, 16, 24, 0.58));
+  border: 1px solid var(--glass-nav-border, rgba(148, 163, 184, 0.12));
+  box-shadow: 0 12px 32px -12px rgba(2, 6, 23, 0.8);
+
+  /* Opaque fallback where backdrop blur is unsupported. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: rgba(10, 12, 18, 0.94);
+  }
+}
+
 /* ── Component layer ─────────────────────────────────────────────────── */
 @layer components {
   /* Inputs */
