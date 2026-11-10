@@ -22,6 +22,7 @@ $app = require_once __DIR__.'/../bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 
 use App\Models\Resource;
+use App\Models\SystemRole;
 use App\Models\User;
 use App\Models\UserRoleAssignment;
 use App\Policies\ResourcePolicy;
@@ -91,6 +92,7 @@ try {
             'created_at' => now(),
         ]);
     }
+    SystemRole::find($missionaryRoleId)?->syncScopeCompatibilities();
 
     $reviewerRoleId = DB::table('system_roles')->where('code', 'director')->value('id');
     if (! $reviewerRoleId) {
@@ -103,6 +105,7 @@ try {
             'created_at' => now(),
         ]);
     }
+    SystemRole::find($reviewerRoleId)?->syncScopeCompatibilities();
 
     $missionaryAssignment = UserRoleAssignment::firstOrCreate(
         [

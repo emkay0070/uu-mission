@@ -737,6 +737,10 @@ class DatabaseSeeder extends Seeder
                     'is_active' => true,
                 ]
             );
+            // This seeder runs with WithoutModelEvents, so the SystemRole
+            // creation hook is muted. Sync explicitly to protect new roles and
+            // repair any existing role whose compatibility rows are missing.
+            $role->syncScopeCompatibilities();
             $permIds = collect($rData['perms'])->map(fn ($code) => (int) $permMap[$code]->id)->unique()->sort()->values()->all();
             $currentIds = $role->currentPermissionVersion?->permissions()->pluck('permissions.id')->map(fn ($id) => (int) $id)->sort()->values()->all() ?? [];
             if ($permIds !== $currentIds) {

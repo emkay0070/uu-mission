@@ -19,26 +19,54 @@ class SystemRole extends Model
 
     protected $fillable = ['code', 'label', 'scope_type', 'is_active', 'current_permission_version_id'];
 
+    /**
+     * Scope coverage per role scope_type, matching the repair migrations.
+     *
+     * global   → global
+     * org_unit → org_unit
+     * campaign → org_unit, campaign
+     * site     → org_unit, campaign, site
+     * team     → org_unit, campaign, site, team
+     *
+     * @return array<int, string>
+     */
+    public static function scopeCompatibilities(string $scopeType): array
+    {
+        return match ($scopeType) {
+            'global' => ['global'],
+            'org_unit' => ['org_unit'],
+            'campaign' => ['org_unit', 'campaign'],
+            'site' => ['org_unit', 'campaign', 'site'],
+            'team' => ['org_unit', 'campaign', 'site', 'team'],
+            default => [$scopeType],
+        };
+    }
+
+    /**
+     * Ensure this role has every compatibility record required by its scope.
+     *
+     * Callers that create roles with Eloquent model events disabled (notably
+     * DatabaseSeeder, which uses WithoutModelEvents) must call this explicitly.
+     * The operation is idempotent and never removes existing rows.
+     */
+    public function syncScopeCompatibilities(): void
+    {
+        if (! Schema::hasTable('role_scope_compatibilities')) {
+            return;
+        }
+
+        foreach (self::scopeCompatibilities($this->scope_type) as $scope) {
+            DB::table('role_scope_compatibilities')->updateOrInsert(
+                ['system_role_id' => $this->id, 'scope_type' => $scope],
+                ['scope_type' => $scope]
+            );
+        }
+    }
+
     protected static function booted(): void
     {
         static::created(function (self $role): void {
-            if (! Schema::hasTable('role_scope_compatibilities')) {
-                return;
-            }
-            $scopes = match ($role->scope_type) {
-                'global' => ['global'],
-                'org_unit' => ['org_unit'],
-                'campaign' => ['org_unit', 'campaign'],
-                'site' => ['org_unit', 'campaign', 'site'],
-                'team' => ['org_unit', 'campaign', 'site', 'team'],
-                default => [$role->scope_type],
-            };
-            foreach ($scopes as $scope) {
-                DB::table('role_scope_compatibilities')->insertOrIgnore([
-                    'system_role_id' => $role->id,
-                    'scope_type' => $scope,
-                ]);
-            }
+            $role->syncScopeCompatibilities();
         });
         static::updated(function (self $role): void {
             if ($role->wasChanged('is_active') && app()->bound(AuthorizationService::class)) {

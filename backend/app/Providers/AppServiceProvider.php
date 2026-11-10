@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Console\Commands\RbacCheckCompatibilities;
 use App\Models\Activity;
 use App\Models\AttendanceRegister;
 use App\Models\Campaign;
@@ -36,6 +37,10 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->scoped(AuthorizationService::class);
+
+        $this->commands([
+            RbacCheckCompatibilities::class,
+        ]);
     }
 
     /**
