@@ -3,42 +3,44 @@
 namespace Database\Seeders;
 
 use App\Models\ActivityType;
-use App\Models\Campaign;
 use App\Models\FunctionalRoleType;
 use App\Models\Language;
-use App\Models\MissionaryProfile;
-use App\Models\MissionSite;
 use App\Models\OrgUnit;
 use App\Models\OrgUnitType;
 use App\Models\Permission;
-use App\Models\Person;
 use App\Models\Programme;
 use App\Models\ProgrammeType;
 use App\Models\ResourceCategory;
 use App\Models\RolePermissionVersion;
 use App\Models\SkillCategory;
 use App\Models\SystemRole;
-use App\Models\Team;
-use App\Models\User;
-use App\Models\UserRoleAssignment;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 
 /**
  * UU Mission Database Seeder
  *
- * Seeds reference data, organizational hierarchy, and admin users.
+ * Seeds reference data, organizational hierarchy, and RBAC configuration.
  *
  * Data seeded:
- *  1. Org unit type taxonomy
- *  2. Org unit hierarchy: Uganda Union → Central Uganda Conference → Districts → Zones → Local Churches
- *  3. Programme types (all 5 ministries)
- *  4. Global Mission programme owned by Uganda Union
- *  5. RBAC: system roles and permissions
- *  6. Platform admin + key staff users with linked person records
+ *  1. Outcome types, encounter methods, engagement stages (via dedicated seeders)
+ *  2. Media permissions (via MediaPermissionsSeeder)
+ *  3. Skill categories
+ *  4. Languages (Mission Translator integration)
+ *  5. Org unit type taxonomy
+ *  6. Org unit hierarchy: Uganda Union → Central Uganda Conference → Districts → Zones → Local Churches
+ *  7. Programme types (all 5 ministries)
+ *  8. Global Mission programme owned by Uganda Union
+ *  9. Activity types
+ *  10. Functional role types
+ *  11. Resource categories
+ *  12. RBAC: system roles, permissions, permission versions, and global delegations
+ *
+ * No demo users, demo campaigns, or demo sites are created. Production
+ * administrator accounts must be provisioned separately via the
+ * `admin:provision` Artisan command.
  */
 class DatabaseSeeder extends Seeder
 {
@@ -50,6 +52,7 @@ class DatabaseSeeder extends Seeder
         $this->call(OutcomeTypeSeeder::class);
         $this->call(EncounterMethodSeeder::class);
         $this->call(EngagementStageSeeder::class);
+        $this->call(MediaPermissionsSeeder::class);
 
         // ── 1. Skill categories ───────────────────────────────────────────────
         SkillCategory::firstOrCreate(['code' => 'evangelism'], ['label' => 'Evangelism',         'description' => 'Preaching, gospel presentations, personal witnessing', 'sort_order' => 10]);
@@ -469,111 +472,10 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // ── 6b. Demo campaign and mission site ────────────────────────────────
-        // A campaign with one mission site so the deployment and site-scoped
-        // workflows can be exercised out of the box. Idempotent, so re-seeding
-        // never creates duplicates.
-        $demoCampaign = Campaign::firstOrCreate(
-            ['name' => 'Central Uganda Conference Evangelistic Campaign'],
-            [
-                'programme_id'      => $programme->id,
-                'lead_org_unit_id'  => $cuc->id,
-                'description'       => 'Demonstration campaign for the Central Uganda Conference.',
-                'status'            => 'active',
-            ]
-        );
-
-        $demoSite = MissionSite::firstOrCreate(
-            [
-                'campaign_id' => $demoCampaign->id,
-                'name'        => 'Lira Town Mission Site',
-            ],
-            [
-                'description' => 'Demonstration mission site.',
-                'status'      => 'active',
-            ]
-        );
-
         // ── 7. RBAC — roles and permissions ───────────────────────────────────
         $roles = $this->seedRolesAndPermissions();
 
-        // ── 8. Users and persons ──────────────────────────────────────────────
-        $adminUser = User::firstOrCreate(
-            ['email' => 'admin@uumission.org'],
-            [
-                'password' => Hash::make('Admin@2026!'),
-                'status' => 'active',
-            ]
-        );
-        Person::firstOrCreate(
-            ['user_id' => $adminUser->id],
-            [
-                'first_name' => 'Platform',
-                'last_name' => 'Administrator',
-                'gender' => 'unspecified',
-            ]
-        );
-
-        $directorUser = User::firstOrCreate(
-            ['email' => 'director@uumission.org'],
-            [
-                'password' => Hash::make('Director@2026!'),
-                'status' => 'active',
-            ]
-        );
-        $directorPerson = Person::firstOrCreate(
-            ['user_id' => $directorUser->id],
-            [
-                'first_name' => 'Emmanuel',
-                'last_name' => 'Okelomole',
-                'gender' => 'male',
-            ]
-        );
-
-        $coordUser = User::firstOrCreate(
-            ['email' => 'lira.coordinator@uumission.org'],
-            [
-                'password' => Hash::make('Coord@2026!'),
-                'status' => 'active',
-            ]
-        );
-        $coordPerson = Person::firstOrCreate(
-            ['user_id' => $coordUser->id],
-            [
-                'first_name' => 'Grace',
-                'last_name' => 'Acen',
-                'gender' => 'female',
-            ]
-        );
-
-        $secUser = User::firstOrCreate(
-            ['email' => 'secretary@uumission.org'],
-            [
-                'password' => Hash::make('Secretary@2026!'),
-                'status' => 'active',
-            ]
-        );
-        $secPerson = Person::firstOrCreate(
-            ['user_id' => $secUser->id],
-            [
-                'first_name' => 'Joseph',
-                'last_name' => 'Okello',
-                'gender' => 'male',
-            ]
-        );
-
-        // Missionary profiles for staff users
-        foreach ([$directorPerson, $coordPerson, $secPerson] as $person) {
-            MissionaryProfile::firstOrCreate(
-                ['person_id' => $person->id],
-                [
-                    'home_org_unit_id' => $cuc->id,
-                    'deployment_status' => 'available',
-                ]
-            );
-        }
-
-        // ── 9. Activity types ────────────────────────────────────────────────
+        // ── 8. Activity types ────────────────────────────────────────────────
         ActivityType::firstOrCreate(['code' => 'evangelistic_meeting'], ['label' => 'Evangelistic Meeting',    'category' => 'outreach',  'requires_attendance_register' => true,  'expected_duration_minutes' => 90]);
         ActivityType::firstOrCreate(['code' => 'bible_study'], ['label' => 'Bible Study Group',       'category' => 'outreach',  'requires_attendance_register' => true,  'expected_duration_minutes' => 60]);
         ActivityType::firstOrCreate(['code' => 'prayer_walk'], ['label' => 'Prayer Walk',             'category' => 'outreach',  'requires_attendance_register' => false, 'expected_duration_minutes' => 60]);
@@ -609,75 +511,12 @@ class DatabaseSeeder extends Seeder
         ResourceCategory::firstOrCreate(['code' => 'prayer'], ['label' => 'Prayer', 'description' => 'Prayer guides and intercession resources', 'sort_order' => 90, 'is_active' => true]);
         ResourceCategory::firstOrCreate(['code' => 'general'], ['label' => 'General', 'description' => 'General mission resources and references', 'sort_order' => 100, 'is_active' => true]);
 
-        // ── 11. Role assignments for admin users ─────────────────────────────────
-        // Admin gets platform_admin role (global)
-        UserRoleAssignment::updateOrCreate(
-            [
-                'user_id' => $adminUser->id,
-                'system_role_id' => $roles['platform_admin']->id,
-            ],
-            [
-                'scope_type' => 'global',
-                'valid_from' => null,
-                'valid_until' => null,
-                'granted_by_user_id' => $adminUser->id,
-            ]
-        );
-
-        // Director gets union_director role (scoped to Uganda Union)
-        UserRoleAssignment::updateOrCreate(
-            [
-                'user_id' => $directorUser->id,
-                'system_role_id' => $roles['union_director']->id,
-                'scoped_org_unit_id' => $uu->id,
-            ],
-            [
-                'scope_type' => 'org_unit',
-                'valid_from' => null,
-                'valid_until' => null,
-                'granted_by_user_id' => $adminUser->id,
-            ]
-        );
-
-        // Coordinator gets union_director role (scoped to Central Uganda Conference)
-        UserRoleAssignment::updateOrCreate(
-            [
-                'user_id' => $coordUser->id,
-                'system_role_id' => $roles['union_director']->id,
-                'scoped_org_unit_id' => $cuc->id,
-            ],
-            [
-                'scope_type' => 'org_unit',
-                'valid_from' => null,
-                'valid_until' => null,
-                'granted_by_user_id' => $adminUser->id,
-            ]
-        );
-
-        // Secretary gets the site_coordinator role, scoped to the demo SITE.
-        // The scope is drawn from the role's own scope_type ('site'), so a
-        // site-scoped role must point at a mission site, never at an org unit.
-        UserRoleAssignment::updateOrCreate(
-            [
-                'user_id' => $secUser->id,
-                'system_role_id' => $roles['site_coordinator']->id,
-                'scoped_site_id' => $demoSite->id,
-            ],
-            [
-                'scope_type' => 'site',
-                'valid_from' => null,
-                'valid_until' => null,
-                'granted_by_user_id' => $adminUser->id,
-            ]
-        );
-
         $this->command->info('✅ UU Mission database seeded:');
         $this->command->info('   • Org hierarchy: Uganda Union → Conferences → Zones → Districts → Local Churches');
-        $this->command->info('   • '.Person::count().' persons in database');
-        $this->command->info('   • '.User::count().' user accounts');
-        $this->command->info('   • '.ActivityType::count().' activity types');
-        $this->command->info('   • '.SystemRole::count().' system roles, '.Permission::count().' permissions');
-        $this->command->info('   • '.UserRoleAssignment::count().' role assignments');
+        $this->command->info('   • '.Permission::count().' permissions');
+        $this->command->info('   • '.SystemRole::count().' system roles');
+        $this->command->info('   • '.OrgUnit::count().' org units');
+        $this->command->info('   • No demo users, campaigns, or sites created.');
     }
 
     // ── RBAC ──────────────────────────────────────────────────────────────────
@@ -759,6 +598,17 @@ class DatabaseSeeder extends Seeder
             ['code' => 'communications.publish',  'label' => 'Publish mission communications',  'module' => 'communications'],
             ['code' => 'communications.acknowledge', 'label' => 'Acknowledge mission instructions', 'module' => 'communications'],
             ['code' => 'communications.revoke',   'label' => 'Revoke mission communications',   'module' => 'communications'],
+
+            // media module (file uploads and attachments)
+            ['code' => 'media.upload',            'label' => 'Upload Media',                    'module' => 'media'],
+            ['code' => 'media.view',              'label' => 'View Media',                      'module' => 'media'],
+            ['code' => 'media.update',            'label' => 'Update Media',                    'module' => 'media'],
+            ['code' => 'media.delete',            'label' => 'Delete Media',                    'module' => 'media'],
+            ['code' => 'media.attach',            'label' => 'Attach Media to Entities',        'module' => 'media'],
+            ['code' => 'media.detach',            'label' => 'Detach Media from Entities',      'module' => 'media'],
+            ['code' => 'media.manage_collections','label' => 'Manage Media Collections',        'module' => 'media'],
+            ['code' => 'media.publish',           'label' => 'Publish Media (Change Visibility)','module' => 'media'],
+            ['code' => 'media.manage_consents',   'label' => 'Manage Media Consents',           'module' => 'media'],
         ];
 
         $permMap = [];
