@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Domain\WorkflowDefinitions;
 use App\Models\Activity;
 use App\Models\Campaign;
+use App\Models\Media;
+use App\Models\MediaAttachment;
 use App\Models\MissionSite;
 use App\Services\AuthorizationService;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +32,7 @@ use Illuminate\Http\Request;
 class ActivityController extends Controller
 {
     public function __construct(private AuthorizationService $auth) {}
+
     /**
      * List activities for a campaign (optionally filtered by site).
      *
@@ -43,7 +46,7 @@ class ActivityController extends Controller
 
         $request->validate([
             'site_id' => ['sometimes', 'integer'],
-            'status'  => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::ACTIVITY_STATUSES)],
+            'status' => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::ACTIVITY_STATUSES)],
         ]);
 
         // The activities are read THROUGH the campaign relation so the owning
@@ -93,16 +96,16 @@ class ActivityController extends Controller
     public function store(Request $request, Campaign $campaign): JsonResponse
     {
         $validated = $request->validate([
-            'mission_site_id'      => ['required', 'integer'],
-            'activity_type_id'     => ['required', 'integer', 'exists:activity_types,id'],
-            'title'                => ['required', 'string', 'max:250'],
-            'description'          => ['sometimes', 'nullable', 'string'],
-            'scheduled_at'         => ['required', 'date'],
+            'mission_site_id' => ['required', 'integer'],
+            'activity_type_id' => ['required', 'integer', 'exists:activity_types,id'],
+            'title' => ['required', 'string', 'max:250'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'scheduled_at' => ['required', 'date'],
             'estimated_attendance' => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'location_note'        => ['sometimes', 'nullable', 'string', 'max:500'],
-            'led_by_person_id'     => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
-            'is_planned'           => ['sometimes', 'boolean'],
-            'notes'                => ['sometimes', 'nullable', 'string'],
+            'location_note' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'led_by_person_id' => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
+            'is_planned' => ['sometimes', 'boolean'],
+            'notes' => ['sometimes', 'nullable', 'string'],
         ]);
 
         // Resolve the site BEFORE authorising: a site-scoped coordinator holds
@@ -123,14 +126,14 @@ class ActivityController extends Controller
 
         if ($duplicate !== null) {
             return response()->json([
-                'message'  => 'An activity with these details already exists for this site and day.',
+                'message' => 'An activity with these details already exists for this site and day.',
                 'activity' => $duplicate->load(['site', 'activityType', 'objectives']),
             ], 409);
         }
 
         $activity = $campaign->activities()->create([
             ...$validated,
-            'status'     => 'scheduled',
+            'status' => 'scheduled',
             'is_planned' => $validated['is_planned'] ?? true,
         ]);
 
@@ -166,17 +169,17 @@ class ActivityController extends Controller
         $this->authorize('update', $activity);
 
         $validated = $request->validate([
-            'title'                => ['sometimes', 'string', 'max:250'],
-            'description'          => ['sometimes', 'nullable', 'string'],
-            'scheduled_at'         => ['sometimes', 'nullable', 'date'],
-            'actual_started_at'    => ['sometimes', 'nullable', 'date'],
-            'actual_ended_at'      => ['sometimes', 'nullable', 'date', 'after:actual_started_at'],
+            'title' => ['sometimes', 'string', 'max:250'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'scheduled_at' => ['sometimes', 'nullable', 'date'],
+            'actual_started_at' => ['sometimes', 'nullable', 'date'],
+            'actual_ended_at' => ['sometimes', 'nullable', 'date', 'after:actual_started_at'],
             'estimated_attendance' => ['sometimes', 'nullable', 'integer', 'min:0'],
-            'location_note'        => ['sometimes', 'nullable', 'string', 'max:500'],
-            'led_by_person_id'     => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
-            'status'               => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::ACTIVITY_STATUSES)],
-            'is_planned'           => ['sometimes', 'boolean'],
-            'notes'                => ['sometimes', 'nullable', 'string'],
+            'location_note' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'led_by_person_id' => ['sometimes', 'nullable', 'integer', 'exists:people,id'],
+            'status' => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::ACTIVITY_STATUSES)],
+            'is_planned' => ['sometimes', 'boolean'],
+            'notes' => ['sometimes', 'nullable', 'string'],
         ]);
 
         $activity->update($validated);
@@ -292,16 +295,21 @@ class ActivityController extends Controller
             'attachment_type' => ['sometimes', 'string', 'max:50'],
         ]);
 
-        $media = \App\Models\Media::where('uuid', $request->media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $request->media_uuid)->firstOrFail();
+
+        // A manager may only attach media they are allowed to see; otherwise
+        // the entity route could be used to pull an unknown media record into
+        // their own scope.
+        $this->authorize('view', $media);
 
         // Consent validation: cannot attach media requiring consent to public contexts if consent not obtained
-        if ($media->requires_consent && !$media->consent_obtained) {
+        if ($media->requires_consent && ! $media->consent_obtained) {
             return response()->json([
                 'message' => 'Media requiring consent cannot be attached until consent is obtained.',
             ], 422);
         }
 
-        $attachment = \App\Models\MediaAttachment::firstOrCreate([
+        $attachment = MediaAttachment::firstOrCreate([
             'media_id' => $media->id,
             'attachable_type' => Activity::class,
             'attachable_id' => $activity->id,
@@ -323,15 +331,15 @@ class ActivityController extends Controller
         $this->validateActivityScope($campaign, $activity);
         $this->authorize('update', $activity);
 
-        $media = \App\Models\Media::where('uuid', $media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $media_uuid)->firstOrFail();
 
         if ($media->uploaded_by_user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $activity->mediaAttachments()
-                  ->where('media_id', $media->id)
-                  ->delete();
+            ->where('media_id', $media->id)
+            ->delete();
 
         return response()->json(['message' => 'Media detached']);
     }

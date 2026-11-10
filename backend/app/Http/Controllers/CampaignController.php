@@ -4,9 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Domain\WorkflowDefinitions;
 use App\Models\Campaign;
+use App\Models\Media;
+use App\Models\MediaAttachment;
 use App\Models\MissionSite;
 use App\Models\OutcomeType;
-use App\Models\Programme;
 use App\Models\User;
 use App\Services\AuthorizationService;
 use Illuminate\Http\JsonResponse;
@@ -38,10 +39,10 @@ class CampaignController extends Controller
         $this->authorize('viewAny', Campaign::class);
 
         $request->validate([
-            'status'       => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::CAMPAIGN_STATUSES)],
+            'status' => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::CAMPAIGN_STATUSES)],
             'programme_id' => ['sometimes', 'integer'],
-            'search'       => ['sometimes', 'string', 'max:100'],
-            'per_page'     => ['sometimes', 'integer', 'between:5,100'],
+            'search' => ['sometimes', 'string', 'max:100'],
+            'per_page' => ['sometimes', 'integer', 'between:5,100'],
         ]);
 
         $query = Campaign::with(['programme.type', 'leadOrgUnit'])
@@ -60,7 +61,7 @@ class CampaignController extends Controller
         }
 
         $campaigns = $query->orderByDesc('start_date')
-                           ->paginate($request->input('per_page', 20));
+            ->paginate($request->input('per_page', 20));
 
         return response()->json($campaigns);
     }
@@ -75,17 +76,17 @@ class CampaignController extends Controller
         $this->authorize('create', Campaign::class);
 
         $validated = $request->validate([
-            'programme_id'     => ['required', 'integer', 'exists:programmes,id'],
+            'programme_id' => ['required', 'integer', 'exists:programmes,id'],
             'lead_org_unit_id' => ['required', 'integer', 'exists:org_units,id'],
-            'name'             => ['required', 'string', 'max:250'],
-            'description'      => ['sometimes', 'string'],
-            'start_date'       => ['sometimes', 'date'],
-            'end_date'         => ['sometimes', 'date', 'after_or_equal:start_date'],
+            'name' => ['required', 'string', 'max:250'],
+            'description' => ['sometimes', 'string'],
+            'start_date' => ['sometimes', 'date'],
+            'end_date' => ['sometimes', 'date', 'after_or_equal:start_date'],
         ]);
 
         $campaign = Campaign::create([
             ...$validated,
-            'status'             => 'planning',
+            'status' => 'planning',
             'created_by_user_id' => $request->user()->id,
         ]);
 
@@ -164,26 +165,26 @@ class CampaignController extends Controller
         );
 
         return [
-            'id'            => $campaign->id,
-            'name'          => $campaign->name,
-            'description'   => $campaign->description,
-            'status'        => $campaign->status,
-            'start_date'    => $campaign->start_date?->toIso8601String(),
-            'end_date'      => $campaign->end_date?->toIso8601String(),
-            'access_level'  => 'limited',
-            'programme'     => $campaign->programme ? [
-                'id'   => $campaign->programme->id,
+            'id' => $campaign->id,
+            'name' => $campaign->name,
+            'description' => $campaign->description,
+            'status' => $campaign->status,
+            'start_date' => $campaign->start_date?->toIso8601String(),
+            'end_date' => $campaign->end_date?->toIso8601String(),
+            'access_level' => 'limited',
+            'programme' => $campaign->programme ? [
+                'id' => $campaign->programme->id,
                 'name' => $campaign->programme->name,
                 'type' => $campaign->programme->type ? [
-                    'code'  => $campaign->programme->type->code,
+                    'code' => $campaign->programme->type->code,
                     'label' => $campaign->programme->type->label,
                 ] : null,
             ] : null,
             'lead_org_unit' => $campaign->leadOrgUnit ? [
-                'id'   => $campaign->leadOrgUnit->id,
+                'id' => $campaign->leadOrgUnit->id,
                 'name' => $campaign->leadOrgUnit->name,
             ] : null,
-            'sites'         => $sitesQuery->get([
+            'sites' => $sitesQuery->get([
                 'id', 'campaign_id', 'name', 'description',
                 'status', 'location_description',
             ])->values(),
@@ -200,11 +201,11 @@ class CampaignController extends Controller
         $this->authorize('update', $campaign);
 
         $validated = $request->validate([
-            'name'             => ['sometimes', 'string', 'max:250'],
-            'description'      => ['sometimes', 'nullable', 'string'],
+            'name' => ['sometimes', 'string', 'max:250'],
+            'description' => ['sometimes', 'nullable', 'string'],
             'lead_org_unit_id' => ['sometimes', 'integer', 'exists:org_units,id'],
-            'start_date'       => ['sometimes', 'nullable', 'date'],
-            'end_date'         => ['sometimes', 'nullable', 'date'],
+            'start_date' => ['sometimes', 'nullable', 'date'],
+            'end_date' => ['sometimes', 'nullable', 'date'],
         ]);
 
         $campaign->update($validated);
@@ -243,8 +244,8 @@ class CampaignController extends Controller
         $campaign->update(['status' => $request->to]);
 
         return response()->json([
-            'message'   => "Campaign transitioned to '{$request->to}'.",
-            'campaign'  => $campaign->fresh(),
+            'message' => "Campaign transitioned to '{$request->to}'.",
+            'campaign' => $campaign->fresh(),
         ]);
     }
 
@@ -263,9 +264,9 @@ class CampaignController extends Controller
             'teams',
             'assignments',
             'assignments as confirmed_assignments' => fn ($q) => $q->where('status', 'confirmed'),
-            'assignments as arrived_assignments'   => fn ($q) => $q->where('status', 'arrived'),
+            'assignments as arrived_assignments' => fn ($q) => $q->where('status', 'arrived'),
             'fieldReports',
-            'fieldReports as pending_reports'      => fn ($q) => $q->where('status', 'draft'),
+            'fieldReports as pending_reports' => fn ($q) => $q->where('status', 'draft'),
             'outcomes',
         ]);
 
@@ -291,29 +292,29 @@ class CampaignController extends Controller
             ->first();
 
         return response()->json([
-            'campaign_id'         => $campaign->id,
-            'status'              => $campaign->status,
-            'sites_count'         => $campaign->sites_count,
-            'teams_count'         => $campaign->teams_count,
-            'missionaries'        => [
-                'total'     => $campaign->assignments_count,
+            'campaign_id' => $campaign->id,
+            'status' => $campaign->status,
+            'sites_count' => $campaign->sites_count,
+            'teams_count' => $campaign->teams_count,
+            'missionaries' => [
+                'total' => $campaign->assignments_count,
                 'confirmed' => $campaign->confirmed_assignments,
-                'arrived'   => $campaign->arrived_assignments,
+                'arrived' => $campaign->arrived_assignments,
             ],
-            'reports'             => [
-                'total'   => $campaign->field_reports_count,
+            'reports' => [
+                'total' => $campaign->field_reports_count,
                 'pending' => $campaign->pending_reports,
             ],
-            'outcomes'            => [
-                'total'   => $campaign->outcomes_count,
+            'outcomes' => [
+                'total' => $campaign->outcomes_count,
                 'by_type' => $outcomeCounts,
             ],
             'aggregated_from_reports' => [
-                'meetings_held'        => (int) $reportTotals->total_meetings,
-                'total_attendance'     => (int) $reportTotals->total_attendance,
-                'decisions'            => (int) $reportTotals->total_decisions,
-                'baptisms'             => (int) $reportTotals->total_baptisms,
-                'bible_studies'        => (int) $reportTotals->total_bible_studies,
+                'meetings_held' => (int) $reportTotals->total_meetings,
+                'total_attendance' => (int) $reportTotals->total_attendance,
+                'decisions' => (int) $reportTotals->total_decisions,
+                'baptisms' => (int) $reportTotals->total_baptisms,
+                'bible_studies' => (int) $reportTotals->total_bible_studies,
             ],
         ]);
     }
@@ -332,16 +333,21 @@ class CampaignController extends Controller
             'attachment_type' => ['sometimes', 'string', 'max:50'],
         ]);
 
-        $media = \App\Models\Media::where('uuid', $request->media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $request->media_uuid)->firstOrFail();
+
+        // A manager may only attach media they are allowed to see; otherwise
+        // the entity route could be used to pull an unknown media record into
+        // their own scope.
+        $this->authorize('view', $media);
 
         // Consent validation: cannot attach media requiring consent to public contexts if consent not obtained
-        if ($media->requires_consent && !$media->consent_obtained) {
+        if ($media->requires_consent && ! $media->consent_obtained) {
             return response()->json([
                 'message' => 'Media requiring consent cannot be attached until consent is obtained.',
             ], 422);
         }
 
-        $attachment = \App\Models\MediaAttachment::firstOrCreate([
+        $attachment = MediaAttachment::firstOrCreate([
             'media_id' => $media->id,
             'attachable_type' => Campaign::class,
             'attachable_id' => $campaign->id,
@@ -362,7 +368,7 @@ class CampaignController extends Controller
     {
         $this->authorize('update', $campaign);
 
-        $media = \App\Models\Media::where('uuid', $media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $media_uuid)->firstOrFail();
 
         // Only uploader can detach their media
         if ($media->uploaded_by_user_id !== $request->user()->id) {
@@ -370,8 +376,8 @@ class CampaignController extends Controller
         }
 
         $campaign->mediaAttachments()
-                  ->where('media_id', $media->id)
-                  ->delete();
+            ->where('media_id', $media->id)
+            ->delete();
 
         return response()->json(['message' => 'Media detached']);
     }

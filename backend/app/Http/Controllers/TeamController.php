@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Domain\WorkflowDefinitions;
 use App\Models\Campaign;
+use App\Models\Media;
+use App\Models\MediaAttachment;
 use App\Models\MissionSite;
 use App\Models\Team;
 use App\Models\TeamMember;
@@ -73,10 +75,10 @@ class TeamController extends Controller
     public function store(Request $request, Campaign $campaign): JsonResponse
     {
         $validated = $request->validate([
-            'name'               => ['required', 'string', 'max:200'],
-            'description'        => ['sometimes', 'nullable', 'string'],
-            'mission_site_id'    => ['sometimes', 'nullable', 'integer'],
-            'team_type_id'       => ['sometimes', 'nullable', 'integer', 'exists:team_types,id'],
+            'name' => ['required', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'mission_site_id' => ['sometimes', 'nullable', 'integer'],
+            'team_type_id' => ['sometimes', 'nullable', 'integer', 'exists:team_types,id'],
             'origin_org_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:org_units,id'],
         ]);
 
@@ -134,9 +136,9 @@ class TeamController extends Controller
         $this->authorize('update', $team);
 
         $validated = $request->validate([
-            'name'               => ['sometimes', 'string', 'max:200'],
-            'description'        => ['sometimes', 'nullable', 'string'],
-            'team_type_id'       => ['sometimes', 'nullable', 'integer', 'exists:team_types,id'],
+            'name' => ['sometimes', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'team_type_id' => ['sometimes', 'nullable', 'integer', 'exists:team_types,id'],
             'origin_org_unit_id' => ['sometimes', 'nullable', 'integer', 'exists:org_units,id'],
         ]);
 
@@ -156,9 +158,9 @@ class TeamController extends Controller
         $this->authorize('manageMember', $team);
 
         $validated = $request->validate([
-            'person_id'    => ['required', 'integer', 'exists:people,id'],
+            'person_id' => ['required', 'integer', 'exists:people,id'],
             'role_in_team' => ['required', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::TEAM_MEMBER_ROLES)],
-            'joined_on'    => ['sometimes', 'nullable', 'date'],
+            'joined_on' => ['sometimes', 'nullable', 'date'],
         ]);
 
         // Only one leader per team. Only an ACTIVE leader blocks the
@@ -293,16 +295,21 @@ class TeamController extends Controller
             'attachment_type' => ['sometimes', 'string', 'max:50'],
         ]);
 
-        $media = \App\Models\Media::where('uuid', $request->media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $request->media_uuid)->firstOrFail();
+
+        // A manager may only attach media they are allowed to see; otherwise
+        // the entity route could be used to pull an unknown media record into
+        // their own scope.
+        $this->authorize('view', $media);
 
         // Consent validation: cannot attach media requiring consent to public contexts if consent not obtained
-        if ($media->requires_consent && !$media->consent_obtained) {
+        if ($media->requires_consent && ! $media->consent_obtained) {
             return response()->json([
                 'message' => 'Media requiring consent cannot be attached until consent is obtained.',
             ], 422);
         }
 
-        $attachment = \App\Models\MediaAttachment::firstOrCreate([
+        $attachment = MediaAttachment::firstOrCreate([
             'media_id' => $media->id,
             'attachable_type' => Team::class,
             'attachable_id' => $team->id,
@@ -324,15 +331,15 @@ class TeamController extends Controller
         $this->validateTeamScope($campaign, $team);
         $this->authorize('update', $team);
 
-        $media = \App\Models\Media::where('uuid', $media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $media_uuid)->firstOrFail();
 
         if ($media->uploaded_by_user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $team->mediaAttachments()
-             ->where('media_id', $media->id)
-             ->delete();
+            ->where('media_id', $media->id)
+            ->delete();
 
         return response()->json(['message' => 'Media detached']);
     }

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Domain\WorkflowDefinitions;
 use App\Models\Campaign;
+use App\Models\Media;
+use App\Models\MediaAttachment;
 use App\Models\MissionSite;
 use App\Services\AuthorizationService;
 use Illuminate\Http\JsonResponse;
@@ -69,14 +71,14 @@ class MissionSiteController extends Controller
         $this->abortIfCampaignLocked($campaign);
 
         $validated = $request->validate([
-            'name'                 => ['required', 'string', 'max:200'],
-            'description'          => ['sometimes', 'nullable', 'string'],
-            'mission_area_id'      => ['sometimes', 'nullable', 'integer', 'exists:mission_areas,id'],
+            'name' => ['required', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'mission_area_id' => ['sometimes', 'nullable', 'integer', 'exists:mission_areas,id'],
             'location_description' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'latitude'             => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
-            'longitude'            => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
-            'operational_from'     => ['sometimes', 'nullable', 'date'],
-            'operational_until'    => ['sometimes', 'nullable', 'date', 'after_or_equal:operational_from'],
+            'latitude' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
+            'operational_from' => ['sometimes', 'nullable', 'date'],
+            'operational_until' => ['sometimes', 'nullable', 'date', 'after_or_equal:operational_from'],
         ]);
 
         $site = $campaign->sites()->create([
@@ -121,15 +123,15 @@ class MissionSiteController extends Controller
         $this->abortIfCampaignLocked($campaign);
 
         $validated = $request->validate([
-            'name'                 => ['sometimes', 'string', 'max:200'],
-            'description'          => ['sometimes', 'nullable', 'string'],
-            'mission_area_id'      => ['sometimes', 'nullable', 'integer', 'exists:mission_areas,id'],
+            'name' => ['sometimes', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'mission_area_id' => ['sometimes', 'nullable', 'integer', 'exists:mission_areas,id'],
             'location_description' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'latitude'             => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
-            'longitude'            => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
-            'status'               => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::SITE_STATUSES)],
-            'operational_from'     => ['sometimes', 'nullable', 'date'],
-            'operational_until'    => ['sometimes', 'nullable', 'date'],
+            'latitude' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
+            'status' => ['sometimes', 'string', 'in:'.WorkflowDefinitions::validationIn(WorkflowDefinitions::SITE_STATUSES)],
+            'operational_from' => ['sometimes', 'nullable', 'date'],
+            'operational_until' => ['sometimes', 'nullable', 'date'],
         ]);
 
         $site->update($validated);
@@ -184,13 +186,13 @@ class MissionSiteController extends Controller
 
         // Check personnel
         $hasCoordinator = $site->assignments->contains(fn ($a) => $a->functionalRoleType?->code === 'site_coordinator');
-        if (!$hasCoordinator) {
+        if (! $hasCoordinator) {
             $missing[] = ['category' => 'personnel', 'item' => 'site_coordinator', 'description' => 'Site coordinator not assigned'];
         }
 
         // Check activities
         $hasActivities = $site->activities->count() > 0;
-        if (!$hasActivities) {
+        if (! $hasActivities) {
             $missing[] = ['category' => 'programme', 'item' => 'activities', 'description' => 'No activities scheduled'];
         }
 
@@ -244,16 +246,21 @@ class MissionSiteController extends Controller
             'attachment_type' => ['sometimes', 'string', 'max:50'],
         ]);
 
-        $media = \App\Models\Media::where('uuid', $request->media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $request->media_uuid)->firstOrFail();
+
+        // A manager may only attach media they are allowed to see; otherwise
+        // the entity route could be used to pull an unknown media record into
+        // their own scope.
+        $this->authorize('view', $media);
 
         // Consent validation: cannot attach media requiring consent to public contexts if consent not obtained
-        if ($media->requires_consent && !$media->consent_obtained) {
+        if ($media->requires_consent && ! $media->consent_obtained) {
             return response()->json([
                 'message' => 'Media requiring consent cannot be attached until consent is obtained.',
             ], 422);
         }
 
-        $attachment = \App\Models\MediaAttachment::firstOrCreate([
+        $attachment = MediaAttachment::firstOrCreate([
             'media_id' => $media->id,
             'attachable_type' => MissionSite::class,
             'attachable_id' => $site->id,
@@ -275,15 +282,15 @@ class MissionSiteController extends Controller
         $this->validateSiteBelongsToCampaign($campaign, $site);
         $this->authorize('update', $site);
 
-        $media = \App\Models\Media::where('uuid', $media_uuid)->firstOrFail();
+        $media = Media::where('uuid', $media_uuid)->firstOrFail();
 
         if ($media->uploaded_by_user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $site->mediaAttachments()
-             ->where('media_id', $media->id)
-             ->delete();
+            ->where('media_id', $media->id)
+            ->delete();
 
         return response()->json(['message' => 'Media detached']);
     }

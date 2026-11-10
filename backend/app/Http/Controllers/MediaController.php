@@ -2,12 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Activity;
+use App\Models\Campaign;
 use App\Models\Media;
-use App\Models\MediaCollection;
 use App\Models\MediaAttachment;
+use App\Models\MediaCollection;
+use App\Models\MissionSite;
+use App\Models\Person;
+use App\Models\Team;
 use App\Services\MediaService;
-use Illuminate\Http\Request;
+use App\Services\MediaVisibilityService;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 
@@ -16,19 +23,38 @@ use Illuminate\Validation\Rule;
  */
 class MediaController extends Controller
 {
-    protected MediaService $mediaService;
+    /**
+     * Entity types media may be attached to through the global media route.
+     *
+     * @var array<string, class-string<Model>>
+     */
+    private const ATTACHABLE_TYPES = [
+        'campaign' => Campaign::class,
+        'appmodelscampaign' => Campaign::class,
+        'missionsite' => MissionSite::class,
+        'appmodelsmissionsite' => MissionSite::class,
+        'site' => MissionSite::class,
+        'team' => Team::class,
+        'appmodelsteam' => Team::class,
+        'activity' => Activity::class,
+        'appmodelsactivity' => Activity::class,
+        'person' => Person::class,
+        'appmodelsperson' => Person::class,
+    ];
 
-    public function __construct(MediaService $mediaService)
-    {
-        $this->mediaService = $mediaService;
-    }
+    public function __construct(
+        private MediaService $mediaService,
+        private MediaVisibilityService $mediaVisibility,
+    ) {}
 
     /**
      * List media items with filtering.
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Media::query();
+        $this->authorize('viewAny', Media::class);
+
+        $query = $this->mediaVisibility->visibleTo($request->user());
 
         // Filter by media type
         if ($request->has('media_type')) {
@@ -57,7 +83,7 @@ class MediaController extends Controller
         if ($request->has('attachable_type') && $request->has('attachable_id')) {
             $query->whereHas('attachments', function ($q) use ($request) {
                 $q->where('attachable_type', $request->attachable_type)
-                  ->where('attachable_id', $request->attachable_id);
+                    ->where('attachable_id', $request->attachable_id);
             });
         }
 
@@ -66,32 +92,24 @@ class MediaController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'ilike', "%{$search}%")
-                  ->orWhere('original_filename', 'ilike', "%{$search}%")
-                  ->orWhere('caption', 'ilike', "%{$search}%");
+                    ->orWhere('original_filename', 'ilike', "%{$search}%")
+                    ->orWhere('caption', 'ilike', "%{$search}%");
             });
         }
 
         // Only show processed media unless specifically requested
-        if (!$request->boolean('include_processing')) {
+        if (! $request->boolean('include_processing')) {
             $query->processed();
         }
 
-        // Apply visibility check - users can only see:
-        // - Their own uploads
-        // - Organisational media (if authenticated)
-        // - Public media
-        $query->where(function ($q) {
-            $q->where('uploaded_by_user_id', Auth::id())
-              ->orWhere('visibility', '!=', 'private');
-        });
-
         $media = $query->orderBy('created_at', 'desc')
-                       ->paginate($request->input('per_page', 24));
+            ->paginate($request->input('per_page', 24));
 
         // Append thumbnail_url to each media item
         $media->getCollection()->transform(function ($item) {
             $item->thumbnail_url = $item->getThumbnailUrl();
             $item->url = $item->getUrl();
+
             return $item;
         });
 
@@ -105,10 +123,7 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
-        // Visibility check
-        if ($media->visibility === 'private' && $media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorize('view', $media);
 
         // Load relationships
         $media->load(['uploader', 'collections', 'attachments.attachable']);
@@ -125,6 +140,8 @@ class MediaController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', Media::class);
+
         $request->validate([
             'file' => 'required|file|max:512000', // Max 500MB
             'title' => 'nullable|string|max:255',
@@ -134,17 +151,27 @@ class MediaController extends Controller
             'requires_consent' => 'nullable|boolean',
             'consent_obtained' => 'nullable|boolean',
             'consent_notes' => 'nullable|string|max:1000',
-            'attachable_type' => 'nullable|string',
-            'attachable_id' => 'nullable|integer',
+            'attachable_type' => ['nullable', 'string', 'required_with:attachable_id'],
+            'attachable_id' => ['nullable', 'integer', 'required_with:attachable_type'],
             'attachment_type' => 'nullable|string|max:50',
         ]);
+
+        $attachable = null;
+        if ($request->filled('attachable_type') && $request->filled('attachable_id')) {
+            $attachable = $this->resolveAttachable(
+                (string) $request->input('attachable_type'),
+                (int) $request->input('attachable_id')
+            );
+
+            $this->authorize('update', $attachable);
+        }
 
         // Consent validation: cannot make media public if it requires consent but consent not obtained
         $visibility = $request->visibility ?? 'private';
         $requiresConsent = $request->boolean('requires_consent');
         $consentObtained = $request->boolean('consent_obtained');
 
-        if ($visibility === 'public' && $requiresConsent && !$consentObtained) {
+        if ($visibility === 'public' && $requiresConsent && ! $consentObtained) {
             return response()->json([
                 'message' => 'Media requiring consent cannot be made public until consent is obtained.',
             ], 422);
@@ -163,15 +190,15 @@ class MediaController extends Controller
             ]);
 
             // Attach to entity if specified
-            if ($request->has('attachable_type') && $request->has('attachable_id')) {
-                $this->attachMedia($media, $request->attachable_type, $request->attachable_id, $request->attachment_type ?? 'general');
+            if ($attachable !== null) {
+                $this->attachMedia($media, $attachable, $request->attachment_type ?? 'general');
             }
 
             return response()->json($media, 201);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Upload failed: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Upload failed: '.$e->getMessage()], 500);
         }
     }
 
@@ -182,10 +209,7 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
-        // Only uploader can update
-        if ($media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorize('update', $media);
 
         $request->validate([
             'title' => 'nullable|string|max:255',
@@ -201,7 +225,7 @@ class MediaController extends Controller
             $requiresConsent = $request->has('requires_consent') ? $request->boolean('requires_consent') : $media->requires_consent;
             $consentObtained = $request->has('consent_obtained') ? $request->boolean('consent_obtained') : $media->consent_obtained;
 
-            if ($requiresConsent && !$consentObtained) {
+            if ($requiresConsent && ! $consentObtained) {
                 return response()->json([
                     'message' => 'Media requiring consent cannot be made public until consent is obtained.',
                 ], 422);
@@ -227,10 +251,7 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
-        // Only uploader can delete
-        if ($media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorize('delete', $media);
 
         // Check if media is attached to entities
         if ($media->attachments()->count() > 0) {
@@ -252,28 +273,34 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
+        $this->authorize('attach', $media);
+
         $request->validate([
             'attachable_type' => 'required|string',
             'attachable_id' => 'required|integer',
             'attachment_type' => 'nullable|string|max:50',
         ]);
 
-        // Only uploader can attach their media
-        if ($media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $attachable = $this->resolveAttachable(
+            (string) $request->input('attachable_type'),
+            (int) $request->input('attachable_id')
+        );
+
+        // The uploader may attach their media only to an entity they can
+        // actually manage. Without this, the global media route would let a
+        // user park media on a campaign or site outside their own scope.
+        $this->authorize('update', $attachable);
 
         try {
             $attachment = $this->attachMedia(
                 $media,
-                $request->attachable_type,
-                $request->attachable_id,
+                $attachable,
                 $request->attachment_type ?? 'general'
             );
 
             return response()->json($attachment, 201);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Attachment failed: ' . $e->getMessage()], 500);
+            return response()->json(['message' => 'Attachment failed: '.$e->getMessage()], 500);
         }
     }
 
@@ -284,26 +311,32 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
+        $this->authorize('detach', $media);
+
         $request->validate([
             'attachable_type' => 'required|string',
             'attachable_id' => 'required|integer',
             'attachment_type' => 'nullable|string|max:50',
         ]);
 
-        // Only uploader can detach their media
-        if ($media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $attachable = $this->resolveAttachable(
+            (string) $request->input('attachable_type'),
+            (int) $request->input('attachable_id')
+        );
+
+        $this->authorize('update', $attachable);
 
         $query = $media->attachments()
-                      ->where('attachable_type', $request->attachable_type)
-                      ->where('attachable_id', $request->attachable_id);
+            ->where('attachable_type', $attachable->getMorphClass())
+            ->where('attachable_id', $attachable->getKey());
 
-        if ($request->has('attachment_type')) {
+        if ($request->filled('attachment_type')) {
             $query->where('attachment_type', $request->attachment_type);
         }
 
-        $query->delete();
+        if ($query->delete() === 0) {
+            return response()->json(['message' => 'Media is not attached to this entity'], 404);
+        }
 
         return response()->json(['message' => 'Media detached']);
     }
@@ -315,14 +348,11 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
-        // Visibility check
-        if ($media->visibility === 'private' && $media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorize('view', $media);
 
         $url = $this->mediaService->getUrl($media);
 
-        if (!$url) {
+        if (! $url) {
             return response()->json(['message' => 'URL not available'], 404);
         }
 
@@ -336,14 +366,11 @@ class MediaController extends Controller
     {
         $media = Media::where('uuid', $uuid)->firstOrFail();
 
-        // Visibility check
-        if ($media->visibility === 'private' && $media->uploaded_by_user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorize('view', $media);
 
         $url = $this->mediaService->getThumbnailUrl($media);
 
-        if (!$url) {
+        if (! $url) {
             return response()->json(['message' => 'Thumbnail not available'], 404);
         }
 
@@ -351,14 +378,35 @@ class MediaController extends Controller
     }
 
     /**
+     * Resolve and validate a polymorphic attachable target.
+     */
+    private function resolveAttachable(string $type, int $id): Model
+    {
+        $normalised = strtolower(str_replace(['\\', '_', ' '], '', $type));
+        $class = self::ATTACHABLE_TYPES[$normalised] ?? null;
+
+        if ($class === null) {
+            abort(422, 'Unsupported attachable type.');
+        }
+
+        $attachable = $class::query()->find($id);
+
+        if ($attachable === null) {
+            abort(404, 'Attachable entity not found.');
+        }
+
+        return $attachable;
+    }
+
+    /**
      * Helper method to attach media to an entity.
      */
-    protected function attachMedia(Media $media, string $attachableType, int $attachableId, string $attachmentType): MediaAttachment
+    protected function attachMedia(Media $media, Model $attachable, string $attachmentType): MediaAttachment
     {
         return MediaAttachment::firstOrCreate([
             'media_id' => $media->id,
-            'attachable_type' => $attachableType,
-            'attachable_id' => $attachableId,
+            'attachable_type' => $attachable->getMorphClass(),
+            'attachable_id' => $attachable->getKey(),
             'attachment_type' => $attachmentType,
         ], [
             'attached_by_user_id' => Auth::id(),
