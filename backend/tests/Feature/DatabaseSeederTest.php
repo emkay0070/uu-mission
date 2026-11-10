@@ -264,6 +264,36 @@ class DatabaseSeederTest extends TestCase
     }
 
     #[Test]
+    public function pre_existing_assignment_without_permission_version_resolves_via_fallback(): void
+    {
+        $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
+
+        // Create an admin user via the provision command (which now sets
+        // role_permission_version_id on the assignment)
+        $this->artisan('admin:provision', [
+            '--email' => 'admin@example.org',
+            '--name' => 'Platform Admin',
+        ])->assertExitCode(0);
+
+        $user = User::where('email', 'admin@example.org')->first();
+        $this->assertNotNull($user);
+
+        // The provisioned admin should have global assignments.manage permission
+        $auth = app(\App\Services\AuthorizationService::class);
+        $this->assertTrue(
+            $auth->hasGlobalPermission($user, 'assignments.manage'),
+            'Provisioned platform_admin should have global assignments.manage permission'
+        );
+
+        // And campaign-scoped permission check should also work
+        $campaign = Campaign::factory()->create();
+        $this->assertTrue(
+            $auth->hasPermissionForCampaign($user, 'assignments.manage', $campaign),
+            'Provisioned admin should have campaign-scoped assignments.manage permission'
+        );
+    }
+
+    #[Test]
     public function admin_provision_command_generates_secure_password(): void
     {
         $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
