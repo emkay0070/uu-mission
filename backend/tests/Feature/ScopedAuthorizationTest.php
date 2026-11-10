@@ -7,9 +7,9 @@ use App\Models\Campaign;
 use App\Models\CampaignAssignment;
 use App\Models\EngagementStage;
 use App\Models\FieldReport;
+use App\Models\MissionaryProfile;
 use App\Models\MissionOutcome;
 use App\Models\MissionSite;
-use App\Models\MissionaryProfile;
 use App\Models\OrgUnit;
 use App\Models\OrgUnitType;
 use App\Models\OutcomeType;
@@ -157,6 +157,38 @@ class ScopedAuthorizationTest extends TestCase
         $ids = collect($response->json('data'))->pluck('id')->toArray();
         $this->assertContains($this->campaignA->id, $ids);
         $this->assertContains($this->campaignB->id, $ids);
+    }
+
+    #[Test]
+    public function platform_admin_can_create_assignment_in_any_campaign(): void
+    {
+        // Regression: a global platform administrator must be able to create a
+        // campaign assignment in ANY campaign, not just one they are scoped to.
+        $admin = $this->createUserWithGlobalRole($this->roleAdmin);
+        $person = Person::factory()->create();
+
+        $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignA->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteA1->id,
+            ])
+            ->assertStatus(201);
+    }
+
+    #[Test]
+    public function platform_admin_can_create_assignment_across_campaigns(): void
+    {
+        // A global platform administrator is not tied to a single campaign:
+        // they may create assignments in a different campaign too.
+        $admin = $this->createUserWithGlobalRole($this->roleAdmin);
+        $person = Person::factory()->create();
+
+        $this->actingAs($admin, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignB->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteB1->id,
+            ])
+            ->assertStatus(201);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -665,6 +697,61 @@ class ScopedAuthorizationTest extends TestCase
             ->assertStatus(403);
     }
 
+    #[Test]
+    public function campaign_scoped_coordinator_can_create_assignment_within_own_campaign(): void
+    {
+        // A campaign-scoped coordinator holds assignments.manage for their own
+        // campaign and may create assignments anywhere within it.
+        $role = $this->createRole('campaign_coordinator', 'campaign', array_merge(
+            $this->coordinatorPerms(),
+            ['assignments.manage']
+        ));
+        $coordinator = $this->createUserWithCampaignRole($role, $this->campaignA);
+        $person = Person::factory()->create();
+
+        $this->actingAs($coordinator, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignA->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteA1->id,
+            ])
+            ->assertStatus(201);
+    }
+
+    #[Test]
+    public function campaign_scoped_coordinator_cannot_create_assignment_outside_own_campaign(): void
+    {
+        // Scoped authority does not leak into a sibling campaign.
+        $role = $this->createRole('campaign_coordinator_other', 'campaign', array_merge(
+            $this->coordinatorPerms(),
+            ['assignments.manage']
+        ));
+        $coordinator = $this->createUserWithCampaignRole($role, $this->campaignA);
+        $person = Person::factory()->create();
+
+        $this->actingAs($coordinator, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignB->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteB1->id,
+            ])
+            ->assertStatus(403);
+    }
+
+    #[Test]
+    public function unauthorised_user_cannot_create_assignment(): void
+    {
+        // A user with no assignments.manage permission is denied.
+        $role = $this->createRole('campaign_reader', 'campaign', ['campaigns.view', 'sites.view']);
+        $user = $this->createUserWithCampaignRole($role, $this->campaignA);
+        $person = Person::factory()->create();
+
+        $this->actingAs($user, 'sanctum')
+            ->postJson("/api/v1/campaigns/{$this->campaignA->id}/assignments", [
+                'person_id' => $person->id,
+                'mission_site_id' => $this->siteA1->id,
+            ])
+            ->assertStatus(403);
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // I. OUTCOME READ PATH & SITE VISIBILITY (permission-driven workspace)
     //
@@ -875,12 +962,12 @@ class ScopedAuthorizationTest extends TestCase
     {
         $user = User::factory()->create();
         UserRoleAssignment::create([
-            'user_id'        => $user->id,
+            'user_id' => $user->id,
             'system_role_id' => $this->roleMissionary->id,
-            'scope_type'     => 'site',
+            'scope_type' => 'site',
             'scoped_site_id' => $this->siteA1->id,
-            'valid_from'     => now()->subMonths(2)->toDateString(),
-            'valid_until'    => now()->subMonth()->toDateString(),
+            'valid_from' => now()->subMonths(2)->toDateString(),
+            'valid_until' => now()->subMonth()->toDateString(),
         ]);
 
         $this->actingAs($user, 'sanctum')
@@ -894,12 +981,12 @@ class ScopedAuthorizationTest extends TestCase
     {
         $user = User::factory()->create();
         UserRoleAssignment::create([
-            'user_id'           => $user->id,
-            'system_role_id'    => $this->roleMissionary->id,
-            'scope_type'        => 'site',
-            'scoped_site_id'    => $this->siteA1->id,
-            'status'            => 'revoked',
-            'revoked_at'        => now(),
+            'user_id' => $user->id,
+            'system_role_id' => $this->roleMissionary->id,
+            'scope_type' => 'site',
+            'scoped_site_id' => $this->siteA1->id,
+            'status' => 'revoked',
+            'revoked_at' => now(),
             'revocation_reason' => 'Appointment withdrawn',
         ]);
 
@@ -927,7 +1014,7 @@ class ScopedAuthorizationTest extends TestCase
         // standing up a team at that site still requires assignments.manage.
         $this->actingAs($teamUser, 'sanctum')
             ->postJson("/api/v1/campaigns/{$this->campaignA->id}/teams", [
-                'name'            => 'Should Not Exist',
+                'name' => 'Should Not Exist',
                 'mission_site_id' => $this->siteA1->id,
             ])
             ->assertStatus(403);
@@ -954,9 +1041,9 @@ class ScopedAuthorizationTest extends TestCase
         $this->actingAs($user, 'sanctum')
             ->postJson("/api/v1/campaigns/{$this->campaignA->id}/outcomes", [
                 'mission_site_id' => $this->siteA1->id,
-                'outcome_type'    => 'decision',
-                'outcome_date'    => now()->toDateString(),
-                'visitor_name'    => 'Test Visitor',
+                'outcome_type' => 'decision',
+                'outcome_date' => now()->toDateString(),
+                'visitor_name' => 'Test Visitor',
             ])
             ->assertStatus(403);
     }
