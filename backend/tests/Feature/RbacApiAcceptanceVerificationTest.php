@@ -99,6 +99,54 @@ class RbacApiAcceptanceVerificationTest extends TestCase
         $this->assertDatabaseHas('user_role_assignment_override_events', ['user_role_assignment_id' => $assignmentId, 'action' => 'removed']);
     }
 
+    public function test_rbac_administration_routes_are_authenticated_and_authorised(): void
+    {
+        $this->getJson('/api/v1/rbac/roles')->assertUnauthorized();
+
+        $unprivileged = User::factory()->create();
+        $this->actingAs($unprivileged, 'sanctum');
+        $this->getJson('/api/v1/rbac/roles')->assertForbidden();
+
+        $adminManage = Permission::firstOrCreate(['code' => 'admin.roles.manage'], ['label' => 'Manage roles', 'module' => 'admin']);
+        $adminRole = SystemRole::create(['code' => 'rbac_route_admin', 'label' => 'RBAC Route Admin', 'scope_type' => 'global', 'is_active' => true]);
+        $adminVersion = $this->version($adminRole, [$adminManage]);
+        $administrator = User::factory()->create();
+        UserRoleAssignment::create([
+            'user_id' => $administrator->id,
+            'system_role_id' => $adminRole->id,
+            'scope_type' => 'global',
+            'role_permission_version_id' => $adminVersion,
+        ]);
+
+        $target = SystemRole::create(['code' => 'rbac_route_target', 'label' => 'RBAC Route Target', 'scope_type' => 'campaign', 'is_active' => true]);
+
+        $this->actingAs($administrator, 'sanctum');
+        $this->getJson('/api/v1/rbac/roles')
+            ->assertOk()
+            ->assertJsonFragment(['code' => $target->code]);
+        $this->getJson("/api/v1/rbac/roles/{$target->id}/permission-versions")->assertOk();
+        $this->getJson('/api/v1/rbac/permission-delegations')->assertOk();
+        $this->putJson("/api/v1/rbac/roles/{$target->id}/compatible-scopes", [
+            'scope_types' => ['org_unit', 'campaign'],
+            'reason' => 'Confirm the campaign role matrix',
+        ])->assertOk();
+
+        $this->actingAs($unprivileged, 'sanctum');
+        $this->putJson("/api/v1/rbac/roles/{$target->id}/permission-versions", [
+            'permission_codes' => [$adminManage->code],
+            'reason' => 'Unauthorised publication attempt',
+        ])->assertForbidden();
+        $this->postJson('/api/v1/rbac/permission-delegations', [
+            'permission_code' => $adminManage->code,
+            'scope_type' => 'global',
+            'reason' => 'Unauthorised delegation attempt',
+        ])->assertForbidden();
+        $this->putJson("/api/v1/rbac/roles/{$target->id}/compatible-scopes", [
+            'scope_types' => ['org_unit', 'campaign'],
+            'reason' => 'Unauthorised compatibility attempt',
+        ])->assertForbidden();
+    }
+
     /** @param array<int, Permission> $permissions */
     private function version(SystemRole $role, array $permissions): int
     {

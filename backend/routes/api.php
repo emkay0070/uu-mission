@@ -35,6 +35,7 @@ use App\Http\Controllers\ResourceNoteController;
 use App\Http\Controllers\ResourceReadingProgressController;
 use App\Http\Controllers\ResourceSavedController;
 use App\Http\Controllers\SiteLogisticsController;
+use App\Http\Controllers\SystemRoleAdministrationController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\TranslationController;
 use App\Http\Controllers\UserRoleAssignmentController;
@@ -420,6 +421,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('baptism-records')->group(function () {
         Route::post('/', [BaptismRecordController::class, 'store']);
         Route::post('/{record}/verify', [BaptismRecordController::class, 'verify']);
+    });
+
+    // ── RBAC administration ────────────────────────────────────────────────────
+    Route::prefix('rbac')->group(function () {
+        Route::get('/roles', [SystemRoleAdministrationController::class, 'index']);
+        Route::get('/roles/{role}/permission-versions', [SystemRoleAdministrationController::class, 'versions']);
+        Route::put('/roles/{role}/permission-versions', [SystemRoleAdministrationController::class, 'publishPermissions']);
+        Route::put('/roles/{role}/compatible-scopes', [SystemRoleAdministrationController::class, 'setCompatibleScopes']);
+        Route::get('/permission-delegations', [SystemRoleAdministrationController::class, 'delegations']);
+        Route::post('/permission-delegations', [SystemRoleAdministrationController::class, 'createDelegation']);
+        Route::delete('/permission-delegations/{delegation}', [SystemRoleAdministrationController::class, 'revokeDelegation']);
     });
 
     // ── Role Assignments (global CRUD) ───────────────────────────────────────────
