@@ -78,7 +78,7 @@ use Illuminate\Support\Facades\Route;
 
 // ── Public Auth (no authentication required) ─────────────────────────────
 Route::prefix('auth')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/login', [AuthController::class, 'login'])->name('login');
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
     Route::get('/verify-email', [AuthController::class, 'verifyEmail']);

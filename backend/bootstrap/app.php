@@ -21,6 +21,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'api/*',
         ]);
+
+        // Use our custom Authenticate middleware so that unauthenticated API
+        // requests always receive a JSON 401 response instead of attempting a
+        // redirect to a named "login" route (which does not exist and would
+        // throw RouteNotFoundException).
+        $middleware->alias([
+            'auth' => \App\Http\Middleware\Authenticate::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
