@@ -184,7 +184,7 @@ export default function RegisterPage() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/v1/auth/register', {
+      const response = await fetch('/api/v1/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -212,7 +212,7 @@ export default function RegisterPage() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8000/api/v1/auth/verify-email', {
+      const response = await fetch('/api/v1/auth/verify-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: verificationToken }),

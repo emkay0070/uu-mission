@@ -33,7 +33,7 @@ export default function OrgHierarchyPicker({ onSelect, selectedId, placeholder =
   const fetchHierarchy = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/v1/org-hierarchy');
+      const response = await fetch('/api/v1/org-hierarchy');
       const data = await response.json();
       setHierarchy(data);
     } catch (error) {
@@ -51,7 +51,7 @@ export default function OrgHierarchyPicker({ onSelect, selectedId, placeholder =
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/org-units/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(`/api/v1/org-units/search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
       setSearchResults(data.results);
     } catch (error) {

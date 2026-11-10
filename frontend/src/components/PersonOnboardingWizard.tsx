@@ -221,7 +221,7 @@ export default function PersonOnboardingWizard({ onSave, onCancel, mode = 'missi
         payload.person_id = personId;
       }
 
-      const response = await fetch('http://localhost:8000/api/v1/onboarding/register', {
+      const response = await fetch('/api/v1/onboarding/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

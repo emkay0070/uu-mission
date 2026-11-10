@@ -39,8 +39,8 @@ export default function InvitationManagement({ onClose }: InvitationManagementPr
     setLoading(true);
     try {
       const url = statusFilter === 'all'
-        ? 'http://localhost:8000/api/v1/invitations'
-        : `http://localhost:8000/api/v1/invitations?status=${statusFilter}`;
+        ? '/api/v1/invitations'
+        : `/api/v1/invitations?status=${statusFilter}`;
       
       const response = await fetch(url, {
         headers: {
@@ -62,7 +62,7 @@ export default function InvitationManagement({ onClose }: InvitationManagementPr
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/invitations/${invitation.id}/revoke`, {
+      const response = await fetch(`/api/v1/invitations/${invitation.id}/revoke`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('uu_token')}`,
@@ -79,7 +79,7 @@ export default function InvitationManagement({ onClose }: InvitationManagementPr
 
   const handleResend = async (invitation: Invitation) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/invitations/${invitation.id}/resend`, {
+      const response = await fetch(`/api/v1/invitations/${invitation.id}/resend`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('uu_token')}`,
@@ -283,7 +283,7 @@ function CreateInvitationForm({ onCancel, onSuccess }: { onCancel: () => void; o
         payload.org_unit_id = selectedChurch.id;
       }
 
-      const response = await fetch('http://localhost:8000/api/v1/invitations', {
+      const response = await fetch('/api/v1/invitations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
