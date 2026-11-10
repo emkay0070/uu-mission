@@ -286,7 +286,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
           Profile drawer before it can navigate anywhere else. */}
       {(moreOpen || profileOpen) && (
         <div
-          className="lg:hidden fixed inset-0 z-10"
+          className="lg:hidden fixed inset-0 z-10 bg-slate-950/40"
           aria-hidden="true"
           onClick={closeMenus}
         />
@@ -357,7 +357,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
         {/* More menu */}
         {moreOpen && (
           <div className="absolute bottom-full left-0 right-0 mb-2 px-2">
-            <div className="glass-card p-2 shadow-xl">
+            <div className="glass-popover p-2">
               {moreNav.map(({ href, label, icon: Icon }) => {
                 const active = isActive(href);
                 return (
@@ -384,7 +384,7 @@ export function MissionaryShell({ children, showHeader = true }: { children: Rea
         {/* Profile menu */}
         {profileOpen && (
           <div className="absolute bottom-full right-2 mb-2 w-48">
-            <div className="glass-card shadow-xl overflow-hidden">
+            <div className="glass-popover overflow-hidden">
               <div className="px-4 py-3 border-b border-white/10">
                 <p className="text-sm font-medium text-slate-100 truncate">
                   {user?.person?.full_name ?? user?.email}

@@ -122,14 +122,28 @@
 @utility glass-nav {
   /* Blur via Tailwind's backdrop utilities: the compiler emits both the
      standard and -webkit- forms, which a hand-written pair does not survive. */
-  @apply backdrop-blur-2xl backdrop-saturate-150;
-  background: var(--glass-nav-bg, rgba(13, 16, 24, 0.58));
-  border: 1px solid var(--glass-nav-border, rgba(148, 163, 184, 0.12));
-  box-shadow: 0 12px 32px -12px rgba(2, 6, 23, 0.8);
+  @apply backdrop-blur-3xl backdrop-saturate-150;
+  background: var(--glass-nav-bg, rgba(13, 16, 24, 0.74));
+  border: 1px solid var(--glass-nav-border, rgba(148, 163, 184, 0.16));
+  box-shadow: 0 12px 40px -12px rgba(2, 6, 23, 0.9);
 
   /* Opaque fallback where backdrop blur is unsupported. */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    background: rgba(10, 12, 18, 0.94);
+    background: rgba(10, 12, 18, 0.96);
+  }
+}
+
+/* Frosted surface for the small-screen drawer and profile popover. Stronger
+   than glass-card so menu text stays readable over busy page content. */
+@utility glass-popover {
+  @apply backdrop-blur-2xl backdrop-saturate-150;
+  background: var(--glass-popover-bg, rgba(15, 19, 28, 0.88));
+  border: 1px solid var(--glass-popover-border, rgba(148, 163, 184, 0.18));
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 48px -12px rgba(2, 6, 23, 0.9);
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: rgba(10, 12, 18, 0.98);
   }
 }
 
