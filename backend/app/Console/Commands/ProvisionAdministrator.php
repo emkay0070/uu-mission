@@ -84,10 +84,19 @@ class ProvisionAdministrator extends Command
             return 1;
         }
 
+        // Pin the role's current published permission version to the
+        // assignment so its effective permissions resolve even if the
+        // getActiveAssignments() fallback path is not reached.
+        $permissionVersion = $platformAdminRole->permissionVersions()
+            ->whereNotNull('published_at')
+            ->orderByDesc('version')
+            ->first();
+
         UserRoleAssignment::create([
             'user_id' => $user->id,
             'system_role_id' => $platformAdminRole->id,
             'scope_type' => 'global',
+            'role_permission_version_id' => $permissionVersion?->id,
             'valid_from' => null,
             'valid_until' => null,
             'granted_by_user_id' => null,
@@ -116,9 +125,36 @@ class ProvisionAdministrator extends Command
             return;
         }
 
-        if (SystemRole::where('code', 'platform_admin')->doesntExist()) {
+        $platformAdminRole = SystemRole::where('code', 'platform_admin')->first();
+
+        if (! $platformAdminRole) {
             $this->warn('platform_admin role not found. Please run `php artisan db:seed` first.');
             return;
+        }
+
+        // Ensure the platform_admin role has a published permission version
+        // covering ALL permissions, so that administrator role assignments can
+        // resolve their effective permissions even when no explicit version is
+        // pinned to the assignment row.
+        $currentVersion = $platformAdminRole->permissionVersions()
+            ->whereNotNull('published_at')
+            ->orderByDesc('version')
+            ->first();
+
+        $allPermissionIds = Permission::all()->pluck('id')->sort()->values()->all();
+        $currentIds = $currentVersion?->permissions->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all() ?? [];
+
+        if ($currentIds !== $allPermissionIds) {
+            $versionNumber = (int) $platformAdminRole->permissionVersions()->max('version') + 1;
+            $version = RolePermissionVersion::create([
+                'system_role_id' => $platformAdminRole->id,
+                'version' => $versionNumber,
+                'change_reason' => 'Published during admin provisioning',
+                'published_at' => null,
+            ]);
+            $version->permissions()->sync($allPermissionIds);
+            $version->update(['published_at' => now()]);
+            $platformAdminRole->update(['current_permission_version_id' => $version->id]);
         }
 
         // Ensure global delegations exist for all permissions so the new

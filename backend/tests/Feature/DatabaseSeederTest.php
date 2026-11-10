@@ -270,4 +270,36 @@ class DatabaseSeederTest extends TestCase
         $this->assertNotNull($user->password);
         $this->assertStringStartsWith('$2y$', $user->password); // bcrypt hash prefix
     }
+
+    #[Test]
+    public function provisioned_administrator_has_campaigns_create_permission(): void
+    {
+        $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
+
+        $this->artisan('admin:provision', [
+            '--email' => 'admin@example.org',
+            '--name' => 'Platform Admin',
+        ])->assertExitCode(0);
+
+        $user = User::where('email', 'admin@example.org')->first();
+        $this->assertNotNull($user);
+
+        // The provisioned platform_admin must be authorized to create campaigns
+        // via canApproveDistribute-style global permission resolution
+        $this->assertTrue(
+            app(\App\Services\AuthorizationService::class)->hasGlobalPermission(
+                $user,
+                'campaigns.create'
+            ),
+            'Provisioned platform_admin must have global campaigns.create permission'
+        );
+
+        // Assignment must have a pinned permission version
+        $assignment = UserRoleAssignment::where('user_id', $user->id)
+            ->where('scope_type', 'global')
+            ->first();
+        $this->assertNotNull($assignment);
+        $this->assertNotNull($assignment->role_permission_version_id);
+        $this->assertNotNull($assignment->permissionVersion);
+    }
 }

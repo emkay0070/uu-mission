@@ -104,7 +104,7 @@ export default function CampaignDetailPage() {
     <div className="flex flex-col h-full">
       {/* Campaign header */}
       <div className="border-b border-surface-border bg-surface-1 px-6 py-5">
-        <Link href="/campaigns" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 mb-3 transition-colors">
+        <Link href="/admin/campaigns" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 mb-3 transition-colors">
           <ArrowLeft className="w-3.5 h-3.5" /> All campaigns
         </Link>
         <div className="flex items-start justify-between gap-4 flex-wrap">
