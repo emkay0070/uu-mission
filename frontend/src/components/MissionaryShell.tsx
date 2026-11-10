@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Home, Languages, Globe, Users, MapPin, Users2,
+  Home, Languages, Users, MapPin, Users2,
   FileText, MessageSquare, LogOut, User, MoreHorizontal, Image, ShieldAlert, Target, ClipboardList,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -32,7 +32,6 @@ type NavItem = {
 const MAIN_NAV: NavItem[] = [
   { href: '/dashboard', label: 'Home', icon: Home },
   { href: '/translator', label: 'Translate', icon: Languages, featured: true },
-  { href: '/mission', label: 'Mission', icon: Globe, module: 'mission' },
   { href: '/team', label: 'Team', icon: Users, module: 'team' },
 ];
 
