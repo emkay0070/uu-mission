@@ -236,7 +236,7 @@ class DatabaseSeederTest extends TestCase
     }
 
     #[Test]
-    public function admin_provision_command_rejects_duplicate_email(): void
+    public function admin_provision_command_is_idempotent_for_duplicate_email(): void
     {
         $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
 
@@ -246,13 +246,21 @@ class DatabaseSeederTest extends TestCase
             '--name' => 'First Admin',
         ])->assertExitCode(0);
 
-        // Second provision with same email should fail
-        $result = $this->artisan('admin:provision', [
-            '--email' => 'unique@example.org',
-            '--name' => 'Second Admin',
-        ]);
+        $user = User::where('email', 'unique@example.org')->first();
+        $this->assertNotNull($user);
+        $this->assertEquals(1, UserRoleAssignment::where('user_id', $user->id)->count());
+        $this->assertEquals(1, Person::where('user_id', $user->id)->count());
 
-        $result->assertExitCode(1);
+        // Second provision with same email should succeed and not duplicate anything
+        $this->artisan('admin:provision', [
+            '--email' => 'unique@example.org',
+            '--name' => 'First Admin',
+        ])->assertExitCode(0);
+
+        $this->assertEquals(1, User::where('email', 'unique@example.org')->count());
+        $this->assertEquals(1, Person::where('user_id', $user->id)->count());
+        $this->assertEquals(1, UserRoleAssignment::where('user_id', $user->id)->count());
+        $this->assertNotNull(UserRoleAssignment::where('user_id', $user->id)->first()->role_permission_version_id);
     }
 
     #[Test]
@@ -269,6 +277,40 @@ class DatabaseSeederTest extends TestCase
         $this->assertNotNull($user);
         $this->assertNotNull($user->password);
         $this->assertStringStartsWith('$2y$', $user->password); // bcrypt hash prefix
+    }
+
+    #[Test]
+    public function admin_provision_command_is_idempotent(): void
+    {
+        $this->artisan('db:seed', ['--force' => true])->assertExitCode(0);
+
+        // First provision
+        $this->artisan('admin:provision', [
+            '--email' => 'idempotent@example.org',
+            '--name' => 'First Admin',
+        ])->assertExitCode(0);
+
+        $user = User::where('email', 'idempotent@example.org')->first();
+        $this->assertNotNull($user);
+        $initialAssignmentCount = UserRoleAssignment::where('user_id', $user->id)->count();
+        $this->assertEquals(1, $initialAssignmentCount);
+        $initialVersionId = $user->roleAssignments()->first()->role_permission_version_id;
+        $this->assertNotNull($initialVersionId);
+
+        // Second provision with same email - should not duplicate anything
+        $this->artisan('admin:provision', [
+            '--email' => 'idempotent@example.org',
+            '--name' => 'First Admin',
+        ])->assertExitCode(0);
+
+        // User count unchanged
+        $this->assertEquals(1, User::where('email', 'idempotent@example.org')->count());
+        // Person count unchanged
+        $this->assertEquals(1, Person::where('user_id', $user->id)->count());
+        // Assignment count unchanged (no duplicate assignment)
+        $this->assertEquals($initialAssignmentCount, UserRoleAssignment::where('user_id', $user->id)->count());
+        // Permission version id preserved (not reset to null)
+        $this->assertNotNull(UserRoleAssignment::where('user_id', $user->id)->first()->role_permission_version_id);
     }
 
     #[Test]

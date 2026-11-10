@@ -46,11 +46,6 @@ class ProvisionAdministrator extends Command
             return 1;
         }
 
-        if (User::where('email', $email)->exists()) {
-            $this->error("A user with email '{$email}' already exists.");
-            return 1;
-        }
-
         // Resolve administrator name.
         $name = $this->option('name') ?? $this->ask('Administrator full name');
 
@@ -64,18 +59,31 @@ class ProvisionAdministrator extends Command
         // Generate a secure random password.
         $password = Str::random(20);
 
-        $user = User::create([
-            'email' => $email,
-            'password' => Hash::make($password),
-            'status' => 'active',
-        ]);
+        // Find existing user or create a new one (idempotent).
+        $user = User::firstOrCreate(
+            ['email' => $email],
+            [
+                'password' => Hash::make($password),
+                'status' => 'active',
+            ]
+        );
 
-        Person::create([
-            'user_id' => $user->id,
-            'first_name' => $firstName,
-            'last_name' => $lastName,
-            'gender' => 'unspecified',
-        ]);
+        // If the user already existed, update their password and status.
+        if ($user->wasRecentlyCreated === false) {
+            $user->update([
+                'password' => Hash::make($password),
+                'status' => 'active',
+            ]);
+        }
+
+        Person::firstOrCreate(
+            ['user_id' => $user->id],
+            [
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'gender' => 'unspecified',
+            ]
+        );
 
         $platformAdminRole = SystemRole::where('code', 'platform_admin')->first();
 
@@ -92,15 +100,19 @@ class ProvisionAdministrator extends Command
             ->orderByDesc('version')
             ->first();
 
-        UserRoleAssignment::create([
-            'user_id' => $user->id,
-            'system_role_id' => $platformAdminRole->id,
-            'scope_type' => 'global',
-            'role_permission_version_id' => $permissionVersion?->id,
-            'valid_from' => null,
-            'valid_until' => null,
-            'granted_by_user_id' => null,
-        ]);
+        UserRoleAssignment::updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'system_role_id' => $platformAdminRole->id,
+                'scope_type' => 'global',
+            ],
+            [
+                'role_permission_version_id' => $permissionVersion?->id,
+                'valid_from' => null,
+                'valid_until' => null,
+                'granted_by_user_id' => null,
+            ]
+        );
 
         $this->newLine();
         $this->info('Platform administrator provisioned successfully.');
